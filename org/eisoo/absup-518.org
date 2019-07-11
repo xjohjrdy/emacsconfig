@@ -1,0 +1,11 @@
+* absup-518
+** DONE http://jira.eisoo.com/browse/ABSUP-518
+   CLOSED: [2019-07-05 周五 10:35]
+** DONE 在备份过程中，eossclient挂了
+   CLOSED: [2019-07-05 周五 10:35]
+** DONE ncASThread.cpp 294行 出的问题
+   CLOSED: [2019-07-05 周五 10:42]
+   writeDataBlock(dataObject.get(), readLen);
+** 实则在获取_objectWriter后，调用的WriteDataBlock方法
+   获取在375行，dont_AddRef(_essWriter->WriteDataObject(object));
+   调用在419行，_objectWriter->WriteDataBlock(block);

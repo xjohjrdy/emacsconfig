@@ -1,0 +1,214 @@
+* 调试开发
+** 通用
+*** bat %ERRORLEVEL%
+*** 常用命令
+**** 查看端口占用
+     netstat -ano | findstr "9660"
+     netstat -natp | grep 9660
+**** 查看空间大小
+     df -h
+     du -h
+**** centos离线安装
+     rpm -ivh xxx.rpm
+**** centos配置离线源
+***** 挂载
+*** 账户密码
+    测试授权90天, @anybackup/7.0/test/90
+    root/eisoo.com123
+    apollo/Driver!@#$5678
+    admin/P@ssword123
+*** 路径
+    D:\gitlab\apollo\apollo\cmake\tools
+    D:\gitlab\apollo\apollo\src
+    D:\gitlab\apollo\apollo\src\cpp\appcore
+    D:\gitlab\apollo\apollo\src\cpp\services\eoss\EOSSService
+    D:\gitlab\apollo\apollo\src\cpp\services\ecss\ECSSService
+    D:\gitlab\apollo\target\Windows_All_x64\Debug
+*** 各文件位置
+**** 卷
+     /sysvol/etc/volume.conf
+     还要改/etc/fstab
+**** 机器码
+     /var/lib/AnyBackup/machinecode
+*** 统计资源位置
+**** ip使用情况
+     AnyShare://AnyBackup产品线/AnyBackup产品测试部/共享资源/5资源统计/IP资源/IPV6使用统计.xlsx
+*** 各类网址
+    centos离线包地址：http://vault.centos.org/7.5.1804/os/Source/SPackages/
+    负责人列表：http://confluence.eisoo.com/pages/viewpage.action?pageId=3379109
+    海量ip：192.168.0.250
+    关爱通地址：http://eisoo.guanaitong.com
+    git合并分支：http://confluence.eisoo.com/pages/viewpage.action?pageId=3379899
+    ftp取包地址：ftp://192.168.123.46/ci-jobs
+    jira任务bug管理：http://jira.eisoo.com:8080/
+    gitlab地址：http://192.168.248.76/
+    ab7.0文档：http://confluence.eisoo.com:8090/pages/viewpage.action?pageId=1088595
+    7.0构建：http://192.168.123.47:8080/
+    7.0分支线构建：http://10.2.9.3:8080/view/service-branch/job/BackupService/
+    小机自动构建:http://10.2.2.4:8080/job/ClientService/
+    主线自动构建:http://192.168.123.47:8080/view/eoss/
+*** 添加当前路径到库路径
+    export LD_LIBRARY_PATH="$(pwd)"
+*** 打开trace调试
+    http://192.168.1.7/trac/eisoo/wiki/nc_trace
+    将以下参数添加到cfl.config里
+    EnableTrace=on
+    TraceOutputLocation=file
+    TraceOutputFile=/eisoo/trace/eoss.trace
+    EnableTraceTime=on
+    EnableThreadSafe=on
+    EnableProcessSafe=on
+    TraceModule=eossclient,eossdataservice,eossdatamanager,eossmetaservice,eossmetamanager,eossnodemanager
+    TraceType=sync
+*** linux
+**** x
+***** 1.开启core功能
+      1编辑文件 /etc/profile
+      最后一行添加  ulimit -c unlimited
+      执行source /etc/profile 使之立即生效
+***** 2.设置core路径:
+      编辑文件 /etc/sysctl.conf
+      添加或修改以下内容 kernel.core_pattern = /eisoo/core-%s-%c-%p-%u-%g-%t-%e
+      执行 sysctl -p /etc/sysctl.conf   使之立即生效
+***** 3.修改cfl.confg
+      修改EOSSService安装包下的cfl.config
+      添加 DisableSignal = on
+      重启服务
+***** 4.备注:
+      以上修改的core目录需要有写权限;
+***** 5.测试core文件:
+      如果以上设置完,直接输入测试命令:
+      kill -s SIGSEGV $$
+      就会在指定目录生成core文件;
+*** 安装命令
+**** server
+     ./install.sh --product=CDM --server-type=MASTER --install-db=yes --db-id=105 --db-vip=10.2.0.153 --cluster-id=43 --cluster-vip=10.2.0.192 --cluster-vip-ex=2018:9::51 --self-ip=10.2.0.244 --self-ip-ex=2018:9::49
+**** client
+     ./install.sh 回答问题
+*** 卸载过程卡住
+    ps -ef | grep AnyBackup | grep -v grep | cut -c 9-15 | xargs kill -9
+    rm -f /etc/systemd/system/AB*
+    rm -f /etc/systemd/system/multi-user.target.wants/AB*
+    systemctl daemon-reload
+    systemctl reset-failed
+    rm -rf /var/lib/AnyBackup/eossn/*
+    rm -rf /var/lib/AnyBackup/eoss*
+** basecore
+*** ut
+    D:\gitlab\ut\src\utBasecore
+** appcore
+*** ut
+    D:\gitlab\ut\src\utAppcore
+    --gtest_filter=utAppcore.all
+** app
+*** volume
+**** volumebrowse
+** EOSS
+*** thritf文件
+    D:\gitlab\apollo\apollo\src\cpp\services\eoss\common\ncEOSSDataMgmSvc.thrift
+    D:\gitlab\apollo\apollo\src\cpp\services\eoss\common\ncEOSSMessage.thrift
+    D:\gitlab\apollo\apollo\src\cpp\services\eoss\common\ncEOSSMetaInfo.thrift
+    D:\gitlab\apollo\apollo\src\cpp\services\eoss\common\ncEOSSMetaMgmSvc.thrift
+    D:\gitlab\apollo\apollo\src\thrift\eosss\service\ncEOSSMgmSvc.thrift
+*** Service
+**** 启动参数文件
+     eoss_svc.config
+**** 配置文件
+     eoss.config
+**** ut
+     D:\gitlab\ut\src\utEOSSService
+     --gtest_filter=utMain.Empty
+*** Client
+**** ut
+     D:\gitlab\ut\src\utEOSSClient
+     --gtest_filter=utIEOSSClient.GetMetaServer
+     --gtest_filter=utThriftClient.all
+*** Clean过程
+** ECSS
+*** thrift文件
+    D:\gitlab\apollo\apollo\src\thrift\ecsss\datatype\ncEcssCommonDefinition.thrift
+    D:\gitlab\apollo\apollo\src\thrift\ecsss\service\ncEcssMgmOperator.thrift
+    D:\gitlab\apollo\apollo\src\cpp\services\ecss\common\ncEcssConstruction.thrift
+    D:\gitlab\apollo\apollo\src\cpp\services\ecss\common\ncEcssMessage.thrift
+*** Service
+**** 启动参数文件
+     ecsssvc.config
+**** 配置文件
+     ecss.config
+*** Client
+**** ut
+     D:\gitlab\ut\src\utECSSClient
+     --gtest_filter=utThriftClient.GetVolumeInfo
+** leveldb
+*** 底层文件读写
+**** dataStorageIndexFile
+***** 打开的时候会直接读取全部文件内容，若过大，会崩吧，可能外层有大小限制
+***** 文件大小的变化在writeIndex时没加锁，持疑
+***** 有个_chunkBlockSize变量，看起来和文件大小一样，但获取的时候若为-1会加锁遍历求值
+**** dataStorageDataFile
+***** 若（读取大于4M的内容）（没有缓存分配，好像可能调用空指针）（offset<cacheOffset搞不懂）（跨缓存分块），不走缓存，直接读
+***** 如果读到缓存里的时候，文件总内容没有那么大，最后一块，那这块缓存就没有4M的实际大小了，当然也无所谓，后面是0嘛，那如果又写了呢，但是有缓存，下次再读，不就走缓存了嘛
+***** 4M一块的缓存按偏移做key的map
+** 其它
+*** 配置及节点信息 /var/lib/Anybackup 目录
+**** config  目录
+***** ecssmeta.config  ECSS的元数据卷设置？
+***** poolmgr  什么池管理
+****** pool_manager  大小为0
+****** pool_manager_BAK  应该是上文件的备件，也为0
+**** eossd  目录  【data 配置】
+***** eoss_data_volumes.config  eoss数据卷配置【限额大小，路径，名字及ID】id共同增长
+***** __eossd_mutex__.fd  锁
+**** eossi  目录  【meta 配置】
+***** 22348ryfhwfh 目录
+****** eoss_meta_volumes.config  eoss元数据卷配置【限额大小，路径，名字及ID】id共同增长
+****** __eossi_mutex__.fd  锁
+**** eossn  目录  【存放节点信息】 【leveldb】
+***** data  目录
+****** CURRENT  【文本】指向清单文件
+****** MANIFEST-zzz  【二进制】清单，应该是对应到ldb文件上
+****** LOCK  锁文件
+****** LOG  【文本】操作日志
+****** LOG.old  【文本】老的操作日志
+****** yyy.ldb  【二进制】实际存放数据文件
+****** xxx.log  【二进制】日志
+***** state  目录
+****** CURRENT  【文本】指向清单文件
+****** MANIFEST-zzzz  【二进制】清单，应该是对应到ldb文件上
+****** LOCK  锁
+****** LOG  【文本】操作日志
+****** LOG.old  【文本】老的操作日志
+****** xxx.ldb  【二进制】实际存放数据文件
+****** yyy.log  【二进制】日志
+**** machinecode  机器码文件
+**** FUE9WQU3928  机器码真文件
+**** secdata.db   什么数据库文件
+**** secdata1.db  什么数据库文件
+*** metadata卷
+**** eossi  目录
+***** ofs  目录
+****** CURRENT  【文本】内容为清单文件名
+****** MANIFEST-zzzzz  【二进制】清单，应该是对应到ldb文件上
+****** LOCK  锁文件
+****** LOG  【文本】操作日志
+****** xxxxxxx.ldb  【二进制】实际存放数据文件 
+****** YYYYYYY.log  【二进制】日志
+**** eossi.lock  锁文件,包含storage的guid
+*** ofs数据卷
+**** eossd  目录
+***** dfs  目录
+****** xxxxxxxxxxxxxxxxxxx_1  目录
+******* disk  目录
+******** xxx00.dsd  文件数据
+******** xxx00.dsi  文件索引
+******** xxx01.dsd
+******** xxx01.dsi
+******* index 目录
+******** TODO xxx00.cki
+******** meta.log  【二进制】日志
+******** size.dat  【二进制】大小
+****** xxxxxxxxxxxxxxxxxxx_2  目录同上
+**** eossd.lock  锁文件,包含storage的guid
+** 以为可优化地方
+*** EOSSNodeClient的Login中，会循环NC_NEW，虽然应该是智能指针自动销毁，但是也会存在分配销毁的开销
+*** 在EOSSClient改善消息的时候，用宏，连参数名都不能变，不好读

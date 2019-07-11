@@ -1,0 +1,602 @@
+* 客户端备份流程
+** 读取配置文件
+** 通过ID获得ncESSClient对象(_essClient)，新建ncESSDataListener，设置给(_essClient)
+** (_essClient)调用Login()方法进行登录
+** (_essClient)调用GetWriteClient()获得ncEOSSDataWriteClient对象(_dataWriter)
+** (_dataWriter)调用Start()方法
+*** 初始化配置(_pConfig)
+*** 通过成员(_eossClient即上面的_essClient)调用GetNodeClient()获得之前(_essClient)Login时创建的ncEOSSNodeClient(_nodeClient)(nodeClient)
+*** 通过(nodeClient)调用GetMetaServer()获得到服务端返回的Meta节点的地址
+*** 创建ncEOSSMetaClient(eossMetaClient)
+*** (eossMetaClient)调用SetOptions()设置(_pConfig)的GetEssOptions()配置
+*** (eossMetaClient)通过刚刚收到的serverip和serverport进行Login()登录
+*** (eossMetaClient)调用InitWrite()获取断点信息
+*** (eossMetaClient)设置SetWriteListener(this)
+*** 将(eossMetaClient)赋值给(_metaClient)
+*** 启动线程(ProcessData())
+**** 启动线程ncThreadAutoClean(threadClean)
+**** 循环等待从std::list<ncSendData>(_sendDataQueue)头取出数据(sendData)
+**** 根据(sendData)的发送类型进行不同的发送
+***** SEND_BLOCK则调用OnWriteDataBlock()
+***** END_OBJECT则调用OnEndDataObject()
+***** SPACE_FULL则调用HandleDataStorageSpaceFull()
+***** SYNC_DEDUP则复杂一些，见代码
+***** EMPTY_SEND不做任何事
+***** 其它类型则抛出异常
+*** 如果要配置重删客户端，通过ncEOSSCreateDedupeClient()创建ncEOSSDataDedupeClient(_dedupTool)，然后调用Start()
+** 通过ID获得ncResourceManager(resourceManager)
+** 通过配置文件中的cid和时间戳生成gns字符串
+** (resourceManager)调用CreateTimepointObject()生成ncTimepointObject对象(timepointObj),根据完备还是增量备份设置不同的属性值
+** (_dataWriter)调用BeginTimepointObject()设置参数timepointObj
+** 通过时间戳及文件路径名和cid生成新的gns
+** (resourceManager)调用CreateDataObject()生成ncDataObject对象(dataObject)
+** (_dataWriter)调用WriteDataObject()传参(dataObject)获得ncEOSSObjectWriter对象(objectWriter)
+*** 通过GetMetaClient()获得(metaClient)
+*** 设置是否重删、是否压缩、是否加密
+*** (metaClient)调用CreateDataObject()通知meta节点创建对象
+*** 新建ncEOSSObjectWriter对象(objectWriter)，设置(objectWriter)相关值
+*** 配置data传输通道
+*** 返回(objectWriter)
+
+
+* EOSSWriteTool
+  读取配置文件(eoss_write_tool.config)进行备份
+** main.cpp    112  writeTool = new ncEOSSWriteTool;
+** main.cpp    113  writeTool.LoadConfig(configName);
+** 设置可通过参数设定的参数，引用++
+** 启动中止线程
+** main.cpp    126  writeTool->Start();
+*** ncEOSSWriteTool.cpp   83  resourceManager = do_CreateInstance(NC_RESOURCE_MGM_CONTRACTID, &rv); 后面创建时间点，数据都需要
+*** 如果不是test ncEOSSWriteTool.cpp  89   essClient = dont_AddRef(ncESSClientFactory::CreateClient(writeOptions));
+**** ncESSClientFactory.h  26  ncCOMPtr<ncIESSComponentFactory> componentFactory = do_GetService(NC_ESS_COMPONENT_FACTORY_CONTRACTID);
+**** ncESSClientFactory.h  34  return componentFactory->CreateClient(memOut.getBuffer(), memOut.getLength());
+***** ncESSComponentFactory.cpp   26  return CreateClient(options);
+****** ncESSComponentFactory.cpp  30  内部根据目标类型，进入不同分支，现进入EOSS
+****** ncESSComponentFactory.cpp  34  essClient = do_CreateInstance(NC_EOSS_CLIENT_CONTRACTID);
+****** ncESSComponentFactory.cpp  36  essClient->SetOptions(options);
+****** ncESSComponentFactory.cpp  81  return essClient;
+*** ncEOSSWriteTool.cpp  153  NC_CREATE_UMM_ALLOACTOR(ncModulePool::getInstance(), ESSWriteToolAlloc, UMM_WAIT);  创建内存池应该是
+*** ncEOSSWriteTool.cpp  160  essClient->SetListener(this);  设置ESS数据监听器，设置两个回调函数(OnMessage和OnWarning)
+*** ncEOSSWriteTool.cpp  162  essClient->Login();   连接服务器，创建内部成员_nodeClient和_metaClientFactory
+**** ncEOSSClient.cpp  63  ncEOSSClient.Login() 函数入口
+**** ncEOSSClient.cpp  69  nsCOMPtr<ncEOSSNodeClient> nodeClient = NC_NEW(_alloc, ncEOSSNodeClient)(_alloc);
+**** ncEOSSClient.cpp  72  nodeClient->Login(_essOptions);
+***** ncEOSSNodeClient.cpp  73  ncEOSSNodeClient.Login() 函数入口
+***** ncEOSSNodeClient.cpp  86  msgClient = NC_NEW(_alloc, ncEOSSMessageClient)(_alloc, this);
+***** ncEOSSNodeClient.cpp  89  msgClient->Connect(serverIp, serverPort, essOptions.serverInfo.clientIp, essOptions.serverInfo.detectTime, NC_EOSS_APP_PORT_NODE_SERVER);
+****** ncEOSSMessageClient.h 49 连接Connect #<<ncEOSSMessageClient.Connect>>
+****** ncEOSSMessageClient.h 53  nsCOMPtr<ncINetClient> netClient = do_CreateInstance(NC_NET_CLIENT_CONTRACTID);
+****** 设置相关参数
+****** ncEOSSMessageClient.h 61  netClient->Start()
+******* ncNetClient.cpp  622  ncNetClient.Start() 函数入口
+******* ncNetClient.cpp  647  ncPipelineServiceManager *svcMgr = ncPipelineServiceManager::GetInstance();
+******* ncNetClient.cpp  651  ncPipelineService *netclientPipeSvc = svcMgr->GetPipelineService("netclient");
+******** ncPipelineService.cpp  202 函数入口，查找名字，如没有，则创建并添加到map中 #<<ncPipelineServiceManager.GetPipelineService>>
+******* ncNetClient.cpp  652  netclientPipeSvc->Start(_theardCountCL);
+******** ncPipelineService.cpp  35  函数入口,循环创建_threadCountCL个ncPipelineWorker对象并start，添加到vector中 #<<ncPipelineService.Start>>
+******** ncPipelineService.cpp  49  ncRefPtr<ncPipelineWorker> worker = new ncPipelineWorker();
+******** ncPipelineService.cpp  50  worker->start();
+********* ncPipelineWorker.h 52 ncThread(LoopRunner<ncPipelineWorker>(this)).detach(); 线程分离 [[ncPipelineWorker.Run]]
+******** ncPipelineService.cpp  51  _workers.push_back(worker);
+******* ncNetClient.cpp  657  this->start(netclientPipeSvc); 启动流水线?
+******** ncClientPipeline.h  60  函数入口
+******** ncClientPipeline.h  63  _pipelineSvc = pipelineSvc;  参数赋值？怎么就启动了呢 #<<_pipelineSvc>>
+******* ncNetClient.cpp  662  _tl->start(_theardCountCL);  启动reactor及传输流水线？ 
+******** ncTransportClient.cpp  553  函数入口
+******** ncTransportClient.cpp  556  ncPipelineServiceManager *pipelinesvcMgr = ncPipelineServiceManager::GetInstance();
+******** ncTransportClient.cpp  557  ncPipelineService *transclientPipeSvc = pipelinesvcMgr->GetPipelineService("transclient");
+********* [[ncPipelineServiceManager.GetPipelineService]]
+******** ncTransportClient.cpp  558  transclientPipeSvc->Start(threadCount);
+********* ncPipelineService.cpp  35  函数入口，过程同上循环创建对象并start [[ncPipelineService.Start]]
+******** ncTransportClient.cpp  561  ncEventLoopServiceManager *eventloopsvcMgr = ncEventLoopServiceManager::GetInstance();
+******** ncTransportClient.cpp  562  _clientId = eventloopsvcMgr->GenClientId();
+******** ncTransportClient.cpp  563  _eventloopSvc = eventloopsvcMgr->GetEventLoopService("transclient");
+********* ncEventLoopService.cpp  101  函数入口，查找名字，如没有，则创建添加到map中 #<<ncEventLoopServiceManager.GetEventLoopService>>
+******** ncTransportClient.cpp  564  _eventloopSvc->Start(threadCount);
+********* ncEventLoopService.cpp  35  函数入口，循环创建threadCount个ncEventLoopWorker,start,添加到vecotr中 #<<ncEventLoopService.Start>>
+********* ncEventLoopService.cpp  49  ncRefPtr<ncEventLoopWorker> worker = new ncEventLoopWorker();
+********* ncEventLoopService.cpp  50  worker->start();
+********** ncEventLoopWorker.h  48  ncThread(LoopRunner<ncEventLoopWorker>(thist)).detach(); 线程分离
+*********** ncEventLoopWorker.h  78 void Run()方法
+*********** ncEventLoopWorker.h  83 _loopwork = new ncIOServiceWork(_ioService);
+*********** ncEventLoopWorker.h  88 _ioService.run();
+********* ncEventLoopService.cpp  51  _workers.push_back(worker);
+******* ncNetClient.cpp  665  _tl->connect(_ip, _port, _appPort, _detectTime, _adapter, _proxyIP, _proxyPort);
+******** ncTransportClient.cpp  117 函数入口
+******** 拆分ip,进行连接
+****** ncEOSSMessageClient.h 62  _netClient = netClient; #<<_netClient>>
+***** ncEOSSNodeClient.cpp  100 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_LOGIN));
+****** ncEOSSMessageClient.h  86  创建message #<<ncEOSSMessageClient.CreateMessage>>
+****** ncEOSSMessageClient.h  88  ncCOMPtr<ncINetClient> netClient = dont_AddRef(GetNetClient()); 即[[_netClient]]
+****** ncEOSSMessageClient.h  92  return netClient->CreateMessage(msgId, this);
+******* ncNetClient.cpp  735  函数入口  // 使用 ncDataStreamAlloc 内存池对象分配内存， ncNetOutputStream 很小，防止上层应用内存不足时仍尝试分配内存，产生死锁
+******* ncNetClient.cpp  747  MSG_HANDLER_ID msgHandlerId = findMsgHandlerId(msgHandler);
+******* ncNetClient.cpp  748  ncChannelMessage *msg = NC_NEW(ncDataStreamAlloc, ncChannelMessage)(ncDataStreamAlloc, msgId, msgHandlerId);
+******* ncNetClient.cpp  750  return msg;
+***** 填写参数
+***** ncEOSSNodeClient.cpp  113 msgClient->SendMessage(netmsg);
+****** ncEOSSMessageClient.h  95  阻塞发送message #<<ncEOSSMessageClient.SendMessage>>
+****** ncEOSSMessageClient.h  97  nsCOMPtr<ncINetClient> netClient = dont_AddRef(GetNetClient()); 即[[_netClient]]
+****** ncEOSSMessageClient.h  101 netClient->SendMessage(netmsg);
+******* ncNetClient.cpp  754  ncNetClient.SendMessage() 函数入口
+******* ncNetClient.cpp  768  ncChannelMessage *msg = static_cast<ncChannelMessage *>(msg);
+******* 设置id，加入到map中
+******* ncNetClient.cpp  786  _tl->push(netMsg->getMsgHandlerId(), out); 将消息推入
+******** ncClientPipeline.h  73  #<<ncClientPipeline.push>> push()入口
+******** ncClientPipeline.h  79  _pipelineSvc->Push(msgHandlerId, this, out); [[_pipelineSvc]]
+********* ncPipelineService.cpp 74 ncPipelineService.Push() 函数入口 从几个线程中取余的方法取出一个线程，添加其中
+********* ncPipelineService.cpp 88 _workers[msgHandlerId % _threadCount]->pushBackMsg(pipeline, ncPipelineMsg::NEXT, msgHandlerId, out); [[ncPipelineWorker.pushBackMsg]]
+******* ncNetClient.cpp  787  netMsg->waitforResult();
+****** ncEOSSMessageClient.cpp  102 int result = netmsg->GetResult();
+***** ncEOSSNodeClient.cpp  117 DeserializeData(in, loginReply); 反序列化回复，如果失败，重试
+***** ncEOSSNodeClient.cpp  136 _msgClient = msgClient;
+**** ncEOSSClient.cpp  80  _nodeClient = nodeClient;
+**** ncEOSSClient.cpp  81  _metaClientFactory = NC_NEW(_alloc, ncEOSSMetaClientFactory)(_alloc, _essOptions, _nodeClient);
+*** ncEOSSWriteTool.cpp  164  dataWriter = dont_AddRef(essClient->GetWriteClient());
+**** ncEOSSClient.cpp  119  writeClient = NC_NEW(_alloc, ncEOSSDataWriteClient)(_alloc, this);
+***** ncEOSSDataWriteClient.cpp 75 _pChunkClientFactory = boost::make_shared<ncEOSSChunkWriteClientFactory>(); 用来管理多个chunkClient
+***** ncEOSSDataWriteClient.cpp 78 _pObjectWriterFacotry = boost::make_shared<ncEOSSObjectWriterFactory>(); 用来管理多个objectWriter
+***** ncEOSSDataWriteClient.cpp 80 _blockChecking = boost::make_shared<ncEOSSSendBlockChecking>();
+**** return writeClient.get();
+*** ncEOSSWriteTool.cpp  166  dataWriter->Start();
+**** ncEOSSDataWriteClient.cpp 104 Start(breakpointInfo);
+***** ncEOSSDataWriteClient.cpp 108 ncEOSSDataWriteClient.Start() 函数入口
+***** ncEOSSDataWriteClient.cpp 121 _pConfig->Init(_eossClient); 初始化配置信息
+***** ncEOSSDataWriteClient.cpp 126 nsCOMPtr<ncIEOSSNodeClient> nodeClient = dont_AddRef(_eossClient->GetNodeClient());
+***** ncEOSSDataWriteClient.cpp 127 nodeClient->GetMetaServer(reply, request);
+****** ncEOSSNodeClient.cpp 172 DO_SEND_NODE_MESSAGE(NC_EOSS_MSGID_GET_META_SERVER);
+******* 宏定义 #<<DO_SEND_NODE_MESSAGE>>
+******* == ncEOSSNodeClient.cpp 36 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+******* == ncEOSSNodeClient.cpp 41 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(msgId)); [[ncEOSSMessageClient.CreateMessage]]
+******* == ncEOSSNodeClient.cpp 45 msgClient->SendMessage(netmsg); [[ncEOSSMessageClient.SendMessage]]
+****** ncEOSSNodeClient.cpp 174 FormatIP(_essOptions.serverInfo.clientIp, reply.serverIp);
+***** ncEOSSDataWriteClient.cpp 136 nsCOMPtr<ncEOSSMetaClient> eossMetaClient = NC_NEW(_alloc, ncEOSSMetaClient)(_alloc);
+***** ncEOSSDataWriteClient.cpp 137 eossMetaClient->SetOptions(_pConfig->GetEssOptions());
+***** ncEOSSDataWriteClient.cpp 139 eossMetaClient->Login(reply.serverIp, reply.serverPort);
+****** ncEOSSMetaClient.cpp 126 _msgClient = dont_AddRef(LoginMetaServer(serverIp, serverPort);
+******* ncEOSSMetaClient.cpp 136 msgClient = NC_NEW(_alloc, ncEOSSMessageClient)(_alloc, this);
+******* ncEOSSMetaClient.cpp 139 msgClient->Connect(::toCFLString(serverIp), serverPort, _essOptions.serverInfo.clientIp, _essOptions.serverInfo.detectTime, NC_EOSS_APP_PORT_META_SERVER); [[ncEOSSMessageClient.Connect]]
+******* ncEOSSMetaClient.cpp 150 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_LOGIN)); [[ncEOSSMessageClient.CreateMessage]]
+******* 填写参数
+******* ncEOSSMetaClient.cpp 163 msgClient->SendMessage(netmsg); [[ncEOSSMessageClient.SendMessage]]
+******* 【若失败则抛出异常】
+******* ncEOSSMetaClient.cpp 179 return msgClient.get();
+***** ncEOSSDataWriteClient.cpp 143 eossMetaClient->InitWrite(writeReply, writeRequest);
+****** ncEOSSMetaClient.cpp 389 DO_SEND_META_MESSAGE(NC_EOSS_MSGID_INIT_WRITE);
+******* 宏定义 #<<DO_SEND_META_MESSAGE>>
+******* == ncEOSSMetaClient.cpp 25 TransferMessage(dont_AddRef(GetMsgClient()), msgId, request, reply);
+******** ncEOSSMetaClient.cpp 37 [template]TransferMessage
+******** ncEOSSMetaClient.cpp 46 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(msgId)); [[ncEOSSMessageClient.CreateMessage]]
+******** ncEOSSMetaClient.cpp 53 msgClient->SendMessage(netmsg); [[ncEOSSMessageClient.SendMessage]]
+***** ncEOSSDataWriteClient.cpp 144-147 设置回复中的断点信息
+***** ncEOSSDataWriteClient.cpp 148 eossMetaClient->SetWriteListener(this);
+***** ncEOSSDataWriteClient.cpp 151 _metaClient = eossMetaClient;
+***** ncEOSSDataWriteClient.cpp 154 ncThread(ncEOSSWriteProcessRunner(this)).detach(); [[ncEOSSDataWriteClient.ProcessData]]
+***** [若需要配置重删客户端]ncEOSSDataWriteClient.cpp 161 _dedupTool = dont_AddRef(ncEOSSCreateDedupeClient());
+***** [若需要配置重删客户端]ncEOSSDataWriteClient.cpp 168 _dedupTool->Start(options);
+*** ncEOSSWriteTool.cpp  172  doBackup()
+**** ncEOSSWriteTool.cpp 223 ncEOSSWriteTool.doBackup() 函数入口
+**** ncEOSSWriteTool.cpp 231 nsCOMPtr<ncITimepointObject> timepointObj = dont_AddRef((ncITimepointObject *)resourceManager->CreateGNSObject(tpGNS));
+***** ncResourceManager.cpp 46 ncResourceManager.CreateGNSObject() 函数入口
+***** 根据类型分别创建【CreateGNSRootObject】【CreateCIDObject】【CreateTimepointObject】【CreateDataObject】
+***** 【#<<CreateGNSRootObject>>】ncResourceManager.cpp 258 ncIGNSRootObject *rootObject = NC_NEW(_dataAlloc, ncGNSRootObject)(_dataAlloc, gns);
+***** 【#<<CreateCIDObject>>】ncResourceManager.cpp 148 ncICIDObject* cidObject = NC_NEW (_dataAlloc, ncCIDObject) (_dataAlloc, gns);
+***** 【#<<CreateTimepointObject>>】ncResourceManager.cpp 159 ncITimepointObject* tpObject = NC_NEW (_dataAlloc, ncTimepointObject) (_dataAlloc, gns);
+***** 【#<<CreateDataObject>>】ncResourceManager.cpp 170 ncIDataObject* dataObject = NC_NEW (_dataAlloc, ncDataObject) (_dataAlloc, gns);
+**** 判断备份类型【完全备份】【增量备份】
+**** ncEOSSWriteTool.cpp 255 nsCOMPtr<ncIMetadata> meta = dont_AddRef(timepointObj->GetMetadata());
+**** 把gns信息写入
+**** ncEOSSWriteTool.cpp 261 dataWriter->BeginTimepointObject(timepointObj);
+***** ncEOSSDataWriteClient.cpp 335 ncEOSSDataWriteClient.BeginTimepointObject() 函数入口
+***** ncEOSSDataWriteClient.cpp 344 nsCOMPtr<ncEOSSMetaClient> metaClient = dont_AddRef(GetMetaClient());
+***** 填充请求id及cid
+***** ncEOSSDataWriteClient.cpp 353 metaClient->CreateTimepointObject(writeReply, writeRequest);
+****** ncEOSSMetaClient.cpp 396 DO_SEND_META_MESSAGE(NC_EOSS_MSGID_BEGIN_TIMEPOINT); [[DO_SEND_META_MESSAGE]]
+**** ncEOSSWriteTool.cpp 266 threadPool.push_back(new ncMessageLoop); 生成一个线程池
+**** 遍历需要备份列表，分为【File】和【Dir】两种
+**** TODO 【Dir】ncEOSSWriteTool.cpp 295 backupDir(dir);
+**** 【File】ncEOSSWriteTool.cpp 298 threadPool[thrindex]->post_task(ncFileReadTask(dataSourceList[i], this));
+***** ncEOSSWriteTool.cpp 39 writeTool->backupFile(file, testAbort);
+****** ncEOSSWriteTool.cpp 381 String gns = ncGNSUtil::combine(tpGNS, fileStr); 生成 gns 字符串
+****** ncEOSSWriteTool.cpp 392 nsCOMPtr<ncIDataObject> dataObject = getter_AddRefs(resourceManager->CreateDataObject(gns)); [[CreateDataObject]]
+****** ncEOSSWriteTool.cpp 394 nsCOMPtr<ncIMetadata> objectMeta = dont_AddRef(dataObject->GetMetadata());
+****** ncEOSSWriteTool.cpp 403 objectWriter = dont_AddRef(dataWriter->WriteDataObject(dataObject));
+******* ncEOSSDataWriteClient.cpp 399 nsCOMPtr<ncEOSSMetaClient> metaClient = dont_AddRef(GetMetaClient());
+******* ncEOSSDataWriteClient.cpp 404-414 设置属性值
+******* ncEOSSDataWriteClient.cpp 422 metaClient->CreateDataObject(writeReply, writeRequest); 通知meta节点创建对象
+******** ncEOSSMetaClient.cpp 494 DO_SEND_META_MESSAGE(NC_EOSS_MSGID_CREATE_DATA_OBJECT); [[DO_SEND_META_MESSAGE]]
+******* ncEOSSDataWriteClient.cpp 425 nsCOMPtr<ncEOSSObjectWriter> objectWriter = new ncEOSSObjectWriter(dataObject, this);
+******* ncEOSSDataWriteClient.cpp 426 objectWriter->SetObjectId(objectId); 设置对象id，取自上述网络请求返回值
+******* ncEOSSDataWriteClient.cpp 427 objectWriter->SetSynthesis(_pConfig->IsUseSysnthesizeBlocks()); 是否需要数据块合成
+******* TODO 【使用多节点存储,目录】ncEOSSDataWriteClient.cpp 434 storageId = _pChunkClientFactory->AllocChunkClientForDir(_pConfig->GetStoragePool(), _eossClient, this);
+******* TODO 【使用多节点存储,文件】ncEOSSDataWriteClient.cpp 438 storageId = _pChunkClientFactory->AllocChunkClient(_pConfig->GetStoragePool(), _eossClient, this);
+******* 【未使用多节点存储】ncEOSSDataWriteClient.cpp 442 storageId = _pChunkClientFactory->AllocChunkClientUnique(_pConfig->GetStoragePool(), -1, _eossClient, this);
+******** ncEOSSChunkWriteClientFactory.cpp 36 AllocChunkClientUnique 函数入口
+******** 【_vChunkInfos为空】ncEOSSChunkWriteClientFactory.cpp 45 int64 storageId = CreateStorageIdToMetaService(storagePool, writeClient); 创建 storageId
+********* ncEOSSChunkWriteClientFactory.cpp 285 const ncESSOptions& writeOptions = writeClient->GetEssOptions(); 获取配置
+********* ncEOSSChunkWriteClientFactory.cpp 286 nsCOMPtr<ncEOSSMetaClient> metaClient = dont_AddRef(writeClient->GetMetaClient());
+********* 在该任务所属的meta节点中创建该cid下的 storageId, 并以 storageId 为key, 将storageInfo保存到数据库中;
+********* ncEOSSChunkWriteClientFactory.cpp 302 metaClient->AllocDataStorageInfo(allocReply, allocRequest);
+********** ncEOSSMetaClient.cpp 527 DO_SEND_META_MESSAGE(NC_EOSS_MSGID_ALLOC_STORAGE); [[DO_SEND_META_MESSAGE]]
+********* 返回 reply 中的 storageId
+******** 【_vChunkInfos为空】为该任务分配 data 节点
+******** 【_vChunkInfos为空】ncEOSSChunkWriteClientFactory.cpp 56 nsCOMPtr<ncIEOSSNodeClient> nodeClient = dont_AddRef(eossClient->GetNodeClient());
+******** 【_vChunkInfos为空】ncEOSSChunkWriteClientFactory.cpp 57 nodeClient->GetDataServer(dsreply, dsrequest);
+********* ncEOSSNodeClient.cpp 181 DO_SEND_NODE_MESSAGE(NC_EOSS_MSGID_GET_DATA_SERVER); [[DO_SEND_NODE_MESSAGE]]
+********* ncEOSSNodeClient.cpp 182 FormatIP(_essOptions.serverInfo.clientIp, reply.serverIp);
+******** 【_vChunkInfos为空】建立数据传输通道 chunkclient
+******** 【_vChunkInfos为空】ncEOSSChunkWriteClientFactory.cpp 67 nsCOMPtr<ncEOSSChunkWriteClient>  chunkClient = CreateChunkClient(dsreply.serverIp, dsreply.serverPort, storagePool, storageId, eossClient, writeClient);
+********* ncEOSSChunkWriteClientFactory.cpp 341 const ncESSOptions& writeOptions = writeClient->GetEssOptions(); 获取配置
+********* 建立数据传输通道
+********* ncEOSSChunkWriteClientFactory.cpp 352 nsCOMPtr<ncEOSSChunkWriteClient> chunkClient = NC_NEW(eossClientAlloc, ncEOSSChunkWriteClient)(eossClientAlloc, writeClient);
+********* ncEOSSChunkWriteClientFactory.cpp 354 chunkClient->SetServerInfo(serverInfo, writeOptions.dataThreadCount, writeOptions.enableDedup ? 4096 : 4194304);
+********* ncEOSSChunkWriteClientFactory.cpp 355 chunkClient->Start();
+********** ncEOSSChunkWriteClient.cpp 76 nsCOMPtr<ncEOSSMessageClient> msgClient = NC_NEW(_alloc, ncEOSSMessageClient)(_alloc, this);
+********** ncEOSSChunkWriteClient.cpp 78 msgClient->Connect(_serverInfo.serverIp, _serverInfo.serverPort, _serverInfo.clientIp, _serverInfo.detectTime, NC_EOSS_APP_PORT_DATA_SERVER); [[ncEOSSMessageClient.Connect]]
+********** ncEOSSChunkWriteClient.cpp 94 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_LOGIN)); [[ncEOSSMessageClient.CreateMessage]]
+********** ncEOSSChunkWriteClient.cpp 100 msgClient->SendMessage(netMsg); [[ncEOSSMessageClient.SendMessage]]
+********** ncEOSSChunkWriteClient.cpp 104 _msgClient = msgClient;
+********* ncEOSSChunkWriteClientFactory.cpp 356 chunkClient->SetFlowControl(writeClient->GetFlowControl()); 设置限速
+********* ncEOSSChunkWriteClientFactory.cpp 357 bool isCreated = chunkClient->CreateDataStorage(storagePool, storageId);
+********** ncEOSSChunkWriteClient.cpp 210 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+********** ncEOSSChunkWriteClient.cpp 214 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_CREATE_DATA_STORAGE)); [[ncEOSSMessageClient.CreateMessage]]
+********** ncEOSSChunkWriteClient.cpp 224 msgClient->SendMessage(netMsg); [[ncEOSSMessageClient.SendMessage]]
+********** 返回创建成功与否
+********* ncEOSSChunkWriteClientFactory.cpp 364 return chunkClient;
+******** 【_vChunkInfos为空】ncEOSSChunkWriteClientFactory.cpp 72-82 将信息加入到缓存中
+******** 【_vChunkInfos为空】ncEOSSChunkWriteClientFactory.cpp 85 AddingStep();
+******** 【_vChunkInfos为空】ncEOSSChunkWriteClientFactory.cpp 86 return storageId;
+******** 【_vChunkInfos不为空】ncEOSSChunkWriteClientFactory.cpp 89 int64 storageId = _currentStep->_storageId; 取出缓存中的id
+******** 【_vChunkInfos不为空】ncEOSSChunkWriteClientFactory.cpp 90 AddingStep();
+********* 加锁,++_currentStep,如果到尾了，指向头
+******** 【_vChunkInfos不为空】ncEOSSChunkWriteClientFactory.cpp 91 return storageId;
+******* ncEOSSDataWriteClient.cpp 444 _pObjectWriterFactory->Insert(objectId, storageId, objectWriter);
+******** ncEOSSObjectWriterFactory.cpp 39 判断 _mapObj2Writer 中是否存在该 objectId,存在抛错
+******** ncEOSSObjectWriterFactory.cpp 49 _mapObj2Writer.insert(make_pair(objectId, info));
+******* ncEOSSDataWriteClient.cpp 447 return objectWriter.get();
+****** ncEOSSWriteTool.cpp 410-427 循环发送数据
+****** ncEOSSWriteTool.cpp 411 nsCOMPtr<ncIDataBlock> dataBlock = getter_AddRefs(resourceManager->CreateDataBlock(dataObject, offset));
+******* 【#<<CreateDataBlock>>】ncResourceManager.cpp 210 ncIDataBlock* dataBlock = NC_NEW (_dataAlloc, ncDataBlock) (_dataAlloc, object, offset);
+****** ncEOSSWriteTool.cpp 412 unsigned char *buf = dataBlock->CreateWriteBuffer(dataBlkSize);
+******* ncDataBlock.cpp 431 return _dataBuffer->CreateWriteBuffer(len);
+******** ncDataBuffer.cpp 87 ncDataBuffer.CreateWriteBuffer() 函数入口
+******** ncDataBuffer.cpp 111 return _buf;
+****** ncEOSSWriteTool.cpp 413 int readLen = fin.read(buf, dataBlkSize); 把要发送的文件内容读到buf中
+****** ncEOSSWriteTool.cpp 417 dataBlock->SetWriteLength(readLen);
+******* ncDataBlock.cpp 466 _dataBuffer->SetWriteLength(len);
+******** ncDataBuffer.cpp 118 _writeLen = len;
+****** ncEOSSWriteTool.cpp 418-419 向后移动
+****** ncEOSSWriteTool.cpp 422 objectWriter->WriteDataBlock(dataBlock);
+******* ncEOSSObjectWriter.cpp 80-96 检错，加锁判断状态
+******* ncEOSSObjectWriter.cpp 99 nsCOMPtr<ncIDataBlockInfo> dataBlockInfo = dont_AddRef(dataBlock->GetDataBlockInfo());
+******* ncEOSSObjectWriter.cpp 100 dataBlockInfo->SetBlockLength(writelen);
+******* ncEOSSObjectWriter.cpp 101 nsCOMPtr<ncIDataObject> dataObject = dont_AddRef(dataBlockInfo->GetDataObject());
+******* ncEOSSObjectWriter.cpp 102 dataObject->SetObjectId(_objectId);
+******* 【未开启重删】ncEOSSObjectWriter.cpp 104 _eossWriteClient->PushDataBlock(_objectId, dataBlock);
+******** 【开启重删，同步压缩】ncEOSSDataWriteClient.cpp 681-687 生成发送的对象ncSendData，调用_blockChecking->DoCheck(sendData)压缩加密，加锁，push_back到list(_sendDataQueue)中，解锁并通知 [[ncEOSSDataWriteClient.ProcessData.wait]]
+******** 【开启重删，其它情况】ncEOSSDataWriteClient.cpp 691 不支持
+******** 【未开启重删，异步加密压缩】ncEOSSDataWriteClient.cpp 699-702 加锁，push_back到list(_sendDataQueue)中，解锁，调用_blockChecking->StopWaiting()
+******** 【未开启重删，同步加密压缩】ncEOSSDataWriteClient.cpp 706-712 生成发送的对象ncSendData，调用_blockChecking->DoCheck(sendData)压缩加密，加锁，push_back到list(_sendDataQueue)中，解锁并通知 [[ncEOSSDataWriteClient.ProcessData.wait]]
+******** 【未开启重删，未加密压缩】ncEOSSDataWriteClient.cpp 717-720 加锁，push_back到list(_sendDataQueue)中，解锁并通知 [[ncEOSSDataWriteClient.ProcessData.wait]]
+******* TODO 【开启重删】ncEOSSObjectWriter.cpp 107 _eossWriteClient->CheckDataBlockForDedup(dataBlock);
+****** 循环结束
+****** 【无错误，无中止】ncEOSSWriteTool.cpp 474 objectWriter->SetSize(objectSize);
+******* ncEOSSObjectWriter.cpp 72 _objectSize = objectSize;
+******* ncEOSSObjectWriter.cpp 73 _dataObject->SetObjectSize(_objectSize);
+****** 【无错误，无中止】ncEOSSWriteTool.cpp 475 objectWriter->Complete();
+******* ncEOSSObjectWriter.cpp 115-123 检错，加锁判断状态
+******* ncEOSSObjectWriter.cpp 125 nsCOMPtr<ncEOSSChunkWriteClient> dataClient = dont_AddRef(_eossWriteClient->GetChunkClient(_objectId));
+******** ncEOSSDataWriteClient.cpp 1035 int64 storageId = _pObjectWriterFactory->FindStorageId(objectId);
+********* #<<ncEOSSObjectWriterFactory.FindStorageId>>
+********* ncEOSSObjectWriterFactory.cpp 115-129 加锁从map(_mapObj2Writer)中查找storageId并返回
+******** ncEOSSDataWriteClient.cpp 1036 nsCOMPtr<ncEOSSChunkWriteClient> chunkClient = _pChunkClientFactory->FindChunkClient(storageId);
+********* #<<ncEOSSObjectWriterFactory.FindChunkClient>>
+********* ncEOSSObjectWriterFactory.cpp 187-202 加锁从缓存map(_mapCacheChuckInfos)中查找chuckClient并返回
+******** ncEOSSDataWriteClient.cpp 1039 return chunkClient.get();
+******* ncEOSSObjectWriter.cpp 129 dataClient->Sync();
+******** #<<ncEOSSChunkWriteClient.Sync>>
+******** ncEOSSChunkWriteClient.cpp 137 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+******** 发送剩下的数据【当前buf大小大于0】
+******** 【请求大于1】ncEOSSChunkWriteClient.cpp 146 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_WRITE_DATA_BATCH)); [[ncEOSSMessageClient.CreateMessage]]
+******** 【请求大于1】ncEOSSChunkWriteClient.cpp 152 nsCOMPtr<ncIDataBuffer> combineBuffer = NC_NEW(eossClientLimitAlloc, ncDataBuffer)(eossClientLimitAlloc);
+******** 【请求大于1】ncEOSSChunkWriteClient.cpp 153 unsigned char* combineBufferPtr = combineBuffer->CreateWriteBuffer(_currentWriteSize);
+******** 【请求大于1】ncEOSSChunkWriteClient.cpp 154-159 遍历_writeDataBuffers，复制到combineBufferPtr中
+******** 【请求大于1】ncEOSSChunkWriteClient.cpp 160 combineBuffer->SetWriteLength(_currentWriteSize);
+******** 【请求大于1】ncEOSSChunkWriteClient.cpp 161 netmsg->SetOutputBodyBuffer(combineBuffer);
+******** 【请求大于1】ncEOSSChunkWriteClient.cpp 163 msgClient->PostMessage(netmsg);
+******** 【其它情况】ncEOSSChunkWriteClient.cpp 166 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_WRITE_DATA)); [[ncEOSSMessageClient.CreateMessage]]
+******** 【其它情况】ncEOSSChunkWriteClient.cpp 172 netmsg->SetOutputBodyBuffer(_writeDataBuffs[0]);
+******** 【其它情况】ncEOSSChunkWriteClient.cpp 174 msgClient->PostMessage(netmsg);
+********* ncEOSSMessageClient.h 112 非阻塞发送message #<<ncEOSSMessageClient.PostMessage>>
+********* ncEOSSMessageClient.h 114 nsCOMPtr<ncINetClient> netClient = dont_AddRef(GetNetClient());
+********* ncEOSSMessageClient.h 118 netClient->PostMessage(netmsg);
+********** ncNetClient.cpp 791 ncNetClient.PostMessage() 函数入口
+********** ncNetClient.cpp 804 ncChannelMessage* netMsg = static_cast <ncChannelMessage*> (msg);
+********** ncNetClient.cpp 816 out->setAppMsgId(netMsg->getMsgId());
+********** ncNetClient.cpp 817 _tl->push(netMsg->getMsgHandlerId(), out);
+*********** [[ncClientPipeline.push]]
+******** ncEOSSChunkWriteClient.cpp 176 resetWriteBuffer();
+******* ncEOSSObjectWriter.cpp 132-136 加锁改变状态为WRITE_COMPLETE
+******* ncEOSSObjectWriter.cpp 138 _eossWriteClient->EndDataObject(_objectId);
+******** ncEOSSDataWriteClient.cpp 661-671 加锁push_back到list(_sendDataQueue)中，解锁并通知 [[ncEOSSDataWriteClient.ProcessData.wait]]
+****** 【其它情况】ncEOSSWriteTool.cpp 478 objectWriter->Abort()
+***** ncEOSSWriteTool.cpp 40 writeTool->finishBackupFile();
+**** 循环等待threadPool->sync();
+**** ncEOSSWriteTool.cpp 320 dataWriter->EndTimepointObject(timepointObj);
+***** ncEOSSDataWriteClient.cpp 367 Sync()
+****** #<<ncEOSSDataWriteClient.Sync>>
+****** ncEOSSDataWriteClient.cpp 296 检查是否已经处理完毕
+****** 循环通知
+****** ncEOSSDataWriteClient.cpp 303 auto vStorageId = _pChunkClientFactory->ListAllStorageId();
+******* #<<ncEOSSChunkWriteClientFactory.ListAllStorageId>> 
+******* ncEOSSChunkWriteClientFactory.cpp 172-183 加锁，从list(_vChunkInfos)中取出_storageId，加到vector<int64>中，返回
+****** 【循环上述vector】ncEOSSDataWriteClient.cpp 305 nsCOMPtr<ncEOSSChunkWriteClient> chunkClient = _pChunkClientFactory->FindChunkClient(storageId); [[ncEOSSChunkWriteClientFactory.FindChunkClient]]
+****** 【循环上述vector】ncEOSSDataWriteClient.cpp 306 chunkClient->Sync(); [[ncEOSSChunkWriteClient.Sync]]
+****** 【若开启重删】ncEOSSDataWriteClient.cpp 313 nsCOMPtr<ncIEOSSDataDedupe> dedupTool = dont_AddRef(GetDedupTool());
+****** 【若开启重删】ncEOSSDataWriteClient.cpp 317 dedupTool->Sync();
+****** ncEOSSDataWriteClient.cpp 323 阻塞直到所有 objectWriter 对象执行完毕
+****** ncEOSSDataWriteClient.cpp 328 _pObjectWriterFactory->WaitingUntilEmpty();
+***** 通知 meta 节点，该 timepoint 对象备份完成
+***** ncEOSSDataWriteClient.cpp 370 nsCOMPtr<ncEOSSMetaClient> metaClient = dont_AddRef(GetMetaClient());
+***** ncEOSSDataWriteClient.cpp 379 metaClient->CompleteTimepointObject (writeReply, writeRequest);
+****** ncEOSSMetaClient.cpp 473 DO_SEND_META_MESSAGE(NC_EOSS_MSGID_END_TIMEPOINT); [[DO_SEND_META_MESSAGE]]
+***** 【若为永久增量】
+*** ncEOSSWriteTool.cpp  181  dataWriter->End()
+**** ncEOSSDataWriteClient.cpp 237 入口，加锁检错
+**** ncEOSSDataWriteClient.cpp 246 Sync();  等待全部 objectWriter 执行完成 [[ncEOSSDataWriteClient.Sync]]
+**** 释放全部 chunkClient
+**** ncEOSSDataWriteClient.cpp 249 auto vStorageId = _pChunkClientFactory->ListAllStorageId(); [[ncEOSSChunkWriteClientFactory.ListAllStorageId]]
+**** 【循环遍历storageId】ncEOSSDataWriteClient.cpp 251 nsCOMPtr<ncEOSSChunkWriteClient> chunkClient = _pChunkClientFactory->FindChunkClient(storageId);
+**** 【循环遍历storageId】ncEOSSDataWriteClient.cpp 252 chunkClient->CloseDataStorage();
+***** ncEOSSChunkWriteClient.cpp 270 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+***** ncEOSSChunkWriteClient.cpp 276 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_CLOSE_DATA_STORAGE)); [[ncEOSSMessageClient.CreateMessage]]
+***** ncEOSSChunkWriteClient.cpp 282 msgClient->SendMessage(netmsg); [[ncEOSSMessageClient.SendMessage]]
+**** 【循环遍历storageId】ncEOSSDataWriteClient.cpp 253 chunkClient->End();
+***** ncEOSSChunkWriteClient.cpp 188 Sync();
+****** ncEOSSChunkWriteClient.cpp 137 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+****** TODO ncEOSSChunkWriteClient.cpp 
+***** ncEOSSChunkWriteClient.cpp 190 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+***** ncEOSSChunkWriteClient.cpp 195 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_LOGOUT)); [[ncEOSSMessageClient.CreateMessage]]
+***** ncEOSSChunkWriteClient.cpp 200 msgClient->SendMessage(netmsg); [[ncEOSSMessageClient.SendMessage]]
+***** ncEOSSChunkWriteClient.cpp 202 msgClient->Disconnect();
+****** #<<ncEOSSMessageClient.Disconnect>>
+****** ncEOSSMessageClient.h 67 nsCOMPtr<ncINetClient> netClient = dont_AddRef(GetNetClient());
+****** 【网络断开或出错】ncEOSSMessageClient.h 70 netClient->Stop();
+****** 【其它】ncEOSSMessageClient.h 73 netClient->End();
+******* ncNetClient.cpp 725 _stopService = true; 请求结束 datachannel 将忽略接下来的所有消息
+******* ncNetClient.cpp 729 nsCOMPtr <ncClientObjectSet> objectSet = getter_AddRefs(_tl->findObjectSet(findMsgHandlerId(_msgHandler.get())));
+******* ncNetClient.cpp 730 nsCOMPtr <ncClientMsgControl> msgContrel = getter_AddRefs(objectSet->getMsgControl());
+******* ncNetClient.cpp 731 msgContrel->sendSysLogoutMsg();
+******** ncClientMsgControl.cpp 96 push(out);
+***** ncEOSSChunkWriteClient.cpp 203 CleanDataClientListener();
+**** 【循环遍历storageId】ncEOSSDataWriteClient.cpp 254 _pChunkClientFactory->FreeChunkClient(storageId);
+***** ncEOSSChunkWriteClientFactory.cpp 205-239 遍历查找删除缓存
+**** ncEOSSDataWriteClient.cpp 258-263 通知 ProcessData 线程结束
+**** 【若开启重删】ncEOSSDataWriteClient.cpp 266-272 释放重删工具
+**** ncEOSSDataWriteClient.cpp 278 nsCOMPtr<ncEOSSMetaClient> metaClient = dont_AddRef(GetMetaClient());
+**** ncEOSSDataWriteClient.cpp 280 metaClient->Logout();
+***** ncEOSSMetaClient.cpp 255 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+***** ncEOSSMetaClient.cpp 256 LogoutMetaServer(msgClient);
+****** ncEOSSMetaClient.cpp 280 msgClient->Disconnect(); [[ncEOSSMessageClient.Disconnect]]
+***** ncEOSSMetaClient.cpp 258-263 加锁赋值为0
+*** ncEOSSWriteTool.cpp  184  dataWriter->GetStatistics(statistics);
+*** ncEOSSWriteTool.cpp  195  essClient->Logout();
+**** ncEOSSClient.cpp 101 ncEOSSNodeClient* impNodeClient = dynamic_cast<ncEOSSNodeClient*>(_nodeClient.get());
+**** ncEOSSClient.cpp 103 impNodeClient->Logout();
+***** ncEOSSNodeClient.cpp 146 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+***** ncEOSSNodeClient.cpp 152 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_LOGOUT)); [[ncEOSSMessageClient.CreateMessage]]
+***** ncEOSSNodeClient.cpp 157 msgClient->SendMessage(netmsg); [[ncEOSSMessageClient.SendMessage]]
+***** ncEOSSNodeClient.cpp 159 msgClient->Disconnect(); [[ncEOSSMessageClient.Disconnect]]
+** main.cpp    127  _writeTool->Release();
+
+
+* ncPipelineWorker
+** ncPipelineWorker.h 69 Run方法 #<<ncPipelineWorker.Run>>
+*** 循环处理队列中的事，先从成员变量(_msgQueueMap)中全取出，添加到局部变量中，再做处理
+*** ncPipelineWorker.h 77 _cond.wait(_mutex); 等待通知
+*** ncPipelineWorker.h 82-98 取出放入msgqueue里
+*** ncPipelineWorker.h 103-108 取出msgqueue里的pipelineMsg
+*** ncPipelineWorker.h pipelineMsg->pipeline->handleMsg(pipelineMsg);
+**** ncClientPipeline.h 204 MSG_HANDLER_ID msgHandlerId = pipeMsg->msgHandlerId;
+**** 根据类型，进入不同分支，此处为PREC
+**** 【PREC】ncClientPipeline.h 218 ncNetInputStream *input = (ncNetInputStream *)pipeMsg->msgData.get();
+**** 【PREC】ncClientPipeline.h 220 bool ignore = exec(msgHandlerId, input);
+***** 【PREC】ncTransportClient.cpp 620 exec 函数入口
+***** 【PREC】ncTransportClient.cpp 636 nsCOMPtr<ncClientObjectSet> objectSet = getter_AddRefs(findObjectSet(msgHandlerId));
+***** 【PREC】ncTransportClient.cpp 641 nsCOMPtr<ncClientMsgControl> msgControl = getter_AddRefs(objectSet->getMsgControl());
+***** 【PREC】ncTransportClient.cpp 645 msgControl->filter(in, ignore);
+***** 【PREC】ncTransportClient.cpp 659 nsCOMPtr<ncDataVerification> dataVerification = getter_AddRefs(objectSet->getDataVerification());
+***** 【PREC】ncTransportClient.cpp 662 ignore = dataVerification->verifyCheckCode(in, hasError);
+***** 【PREC】ncTransportClient.cpp 680 return ignore; (false)
+**** 【PREC, _prev && !ignore】ncClientPipeline.h 223 _prev->pop(msgHandlerId, input);
+***** 【PREC】ncNetClient.cpp 427 pop 函数入口
+***** 【PREC，in非空，且不是SendMsg，且在map中能找到】ncNetClient.cpp 438 netMsg->signalForResult();
+***** 【PREC，其它】ncNetClient.cpp 445 return ncClientPipeline::pop(msgHandlerId, in);
+**** 根据类型，进入不同分支，此处为NEXT
+**** 【NEXT】ncClientPipeline.h 227 ncNetOutputStream *output = (ncNetOutputStream *)pipeMsg->msgData.get();
+**** 【NEXT】ncClientPipeline.h 229 bool ignore = exec(msgHandlerId, output);
+***** 【NEXT】ncTransportClient.cpp 578 exec 函数入口
+***** 【NEXT】ncTransportClient.cpp 582 nsCOMPtr<ncClientObjectSet> objectSet = getter_AddRefs(findObjectSet(msgHandlerId));
+***** 【NEXT】ncTransportClient.cpp 586 nsCOMPtr<ncClientMsgControl> msgControl = getter_AddRefs(objectSet->getMsgControl());
+***** 【NEXT】ncTransportClient.cpp 599 nsCOMPtr<ncDataVerification> dataVerification = getter_AddRefs(objectSet->getDataVerification());
+***** 【NEXT】ncTransportClient.cpp 600 dataVerification->buildCehckCode(out); 生成数据校验码
+***** 【NEXT】ncTransportClient.cpp 605 msgControl->push(out); 将数据压入 control 待发送队列中
+****** 【NEXT】ncDataStream.cpp 135 push函数入口
+****** 【NEXT】根据类型不同，此为其它分支
+****** 【NEXT】ncDataStream.cpp 189 _outDatas.push_back(out);
+****** 【NEXT】ncDataStream.cpp 197 writeNotifyHandler = _handler;
+****** 【NEXT】ncDataStream.cpp 203 writeNotifyHandler->writeNotify();
+******* 【NEXT】ncNetIOHandler.cpp 342 writeNotify函数入口
+******* 【NEXT】ncNetIOHandler.cpp 357 _ioService.post(ncWritelauncher(this));
+******* 【NEXT】ncNetIOHandler.cpp 359 return 0;
+***** 【NEXT】ncTransportClient.cpp 614 return false;
+**** 【NEXT, _next && !ignore】ncClientPipeline.h 232 _next->push(msgHandlerId, output);
+**** 根据类型，进入不同分支，此处为COMMAND
+**** 【COMMAND】ncClientPipeline.h 236 ncPipelineCmd *cmd = (ncPipelineCmd *)pipeMsg->msgData.get();
+**** 【COMMAND】ncClientPipeline.h 237 cmd->call(msgHandlerId); 有多个 call 实现
+***** 【COMMAND,ncClientConnectetCmd】ncNetClient.cpp 57 _msgHandler->OnConnected();
+***** 【COMMAND,ncReconnectCmd】ncTransportClient.cpp 59 _tl->reconnect(_remainingTime);
+***** 【COMMAND,ncClientNotifyCmd】ncNetClient.cpp 176 _msgHandler->OnMessage(_msg); ps:回调到ncEOSSNodeClient，为空
+***** 【COMMAND,ncClientNotifyNetErrorCmd】ncNetClient.cpp 238 _msgHandler->OnNotifyNetFault(_warnMsg); ps:回调到ncEOSSNodeClient，为空
+***** 【COMMAND,ncClientNotifyMsgCmd】ncNetClient.cpp 176 _msgHandler->OnMessage(_msg); ps:回调到ncEOSSNodeClient，为空
+***** 【COMMAND,ncClientAbortDisconnectetCmd】ncNetClient.cpp 135 _msgHandler->OnAbortDisconnected(_exception);
+****** ncEOSSMessageClient.h 217 CleanTargetHandler();
+****** ncEOSSMessageClient.h 218 return targetHandler->OnAbortDisconnected(e);
+******* ncEOSSNodeClient.cpp 355 _hasError = true;
+******* ncEOSSNodeClient.cpp 356 _endEvt.signal();
+***** 【COMMAND,ncClientAbortDisconnectetCmd】ncNetClient.cpp 135 _client->notifyChannelMessageError(_exception);
+***** 【COMMAND,ncClientAbortDisconnectetCmd】ncNetClient.cpp 135 _client->stop();
+****** ncClientPipeline.h 70 _hasStopped = true;
+**** ncClientPipeline.h 271 return 0;
+** ncPipelineWorker.h 127 pushBackMsg方法 #<<ncPipelineWorker.pushBackMsg>>
+*** ncPipelineWorker.h 129 ncPipelineMsg *pipelineMsg = new ncPipeMsg(ppipeline, pmsgType, pmsgHandlerId, pmsgcomp);
+*** ncPipelineWorker.h 132 ncPipelineMsgQueue &messageQueue = _msgQueueMap[pmsgHandlerId];  取出 map 中的队列(list)
+*** ncPipelineWorker.h 133 messageQueue.push_back(pipelineMsg);
+*** 解锁并通知 [[ncPipelineWorker.Run]]
+
+
+* ncEOSSDataWriteClient
+** ncEOSSDataWriteClient.cpp 755 ProcessData方法 #<<ncEOSSDataWriteClient.ProcessData>>
+*** ncEOSSDataWriteClient.cpp 757 ncThreadAutoClean threadClean(_blockChecking); 定义清理线程，然后设置相关参数
+*** ncEOSSDataWriteClient.cpp 762 _blockChecking->Start(this);
+*** 进入循环消费
+*** ncEOSSDataWriteClient.cpp 770 _dataQueueCond.wait(_dataQueueMutex, 5000); 等待数据 #<<ncEOSSDataWriteClient.ProcessData.wait>>
+*** ncEOSSDataWriteClient.cpp 772-774 判断是否有错或强制停止，若是 break
+*** ncEOSSDataWriteClient.cpp 776-780 【队列为空且开启重删】_sendDataQueue.push_back(ncSendData(ncSendData::SYNC_DEDUP));
+*** ncEOSSDataWriteClient.cpp 790 sendData = _sendDataQueue.front(); 取出一条数据
+*** ncEOSSDataWriteClient.cpp 791-797 检查是否完整，不完整则再等待，sendData赋为空；完整则从队列中移除
+*** ncEOSSDataWriteClient.cpp 799 释放锁
+*** 【出错或强制停止】
+*** 根据类型不同，走不同分支
+*** 【SEND_BLOCK】ncEOSSDataWriteClient.cpp 833 OnWriteDataBlock(sendData);
+**** ncEOSSDataWriteClient.cpp 889 nsCOMPtr<ncEOSSObjectWriter> objectWriter = _pObjectWriterFactory->FindObjectWriter(sendData.objectId);
+**** ncEOSSDataWriteClient.cpp 901 objectWriter->DoWriteDataBlock(sendData);
+***** ncEOSSObjectWriter.cpp 318 ncEOSSObjectWriter.DoWriteDataBlock() 函数入口
+***** ncEOSSObjectWriter.cpp 332 nsCOMPtr<ncIDataBlock> dataBlock = sendData.dataBlock; 获取数据块(片)
+***** ncEOSSObjectWriter.cpp 335 nsCOMPtr<ncIDataBlockInfo> blockInfo = dont_AddRef(dataBlock->GetDataBlockInfo()); 获取原始数据块(片)信息
+***** ncEOSSObjectWriter.cpp 340 blockId = _blockIdSeed++; 为 block 递增编号，从0开始
+***** ncEOSSObjectWriter.cpp 341 blockInfo->SetDataBlockId(blockId); 设置 blockId
+***** ncEOSSObjectWriter.cpp 342 _dataBlockMap[blockId] = sendData; 缓存待发送数据块(片),其一确保数据成功发送后再发送其索引，其二当发送失败可利用缓存重新发送
+***** ncEOSSObjectWriter.cpp 347 nsCOMPtr<ncEOSSChunkWriteClient> dataClient = dont_AddRef(_eossWriteClient->GetChunkClient(_objectId));
+***** 【非重删】ncEOSSObjectWriter.cpp 355 dataClient->WriteDataBlockData(blockId, sendData); 向 data server post 发送数据，若发送成功，会回调 ncEOSSDataWriteClient::OnWriteDataBlockData(...)
+****** ncEOSSChunkWriteClient.cpp 323 WriteDataBlockData()函数入口
+****** ncEOSSChunkWriteClient.cpp 329 nsCOMPtr<ncEOSSMessageClient> msgClient = dont_AddRef(GetMsgClient());
+****** ncEOSSChunkWriteClient.cpp 334 nsCOMPtr<ncIDataBlock> dataBlock = sendData.dataBlock; 原始数据块(片)，未做压缩/加密
+****** ncEOSSChunkWriteClient.cpp 341 nsCOMPtr<ncIDataBlockInfo> blockInfo = dont_AddRef(dataBlock->GetDataBlockInfo());
+****** ncEOSSChunkWriteClient.cpp 342 unsigned int originBlkLen = blockInfo->GetBlockLength(); 获取数据块长度(原始长度)，处理前size
+****** ncEOSSChunkWriteClient.cpp 344 nsCOMPtr<ncIDataBuffer> blockBuffer = sendData.GetCheckDoneBuff(); 做了压缩/加密后的buff,如果不需要压缩/加密，则等同于原始buff
+****** ncEOSSChunkWriteClient.cpp 345 writeRequest.blockLength = blockBuffer->GetWriteLength(); 获取压缩/加密后的size,处理后的size
+****** 【未激活写缓存】ncEOSSChunkWriteClient.cpp 348 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_WRITE_DATA));
+****** 【未激活写缓存】ncEOSSChunkWriteClient.cpp 354 netmsg->SetOutputBodyBuffer(blockBuffer);
+****** 【未激活写缓存】ncEOSSChunkWriteClient.cpp 356 msgClient->PostMessage(netmsg);
+****** 【激活写缓存,当前buf大小>buf最大值或请求长度>=buf最大值】ncEOSSChunkWriteClient.cpp 362-368 交换，重置
+****** 【激活写缓存,当前buf大小>buf最大值或请求长度>=buf最大值,请求数大小1】ncEOSSChunkWriteClient.cpp
+****** 【激活写缓存,当前buf大小>buf最大值或请求长度>=buf最大值,请求数等于1】ncEOSSChunkWriteClient.cpp 393 nsCOMPtr<ncIChannelMessage> netmsg = dont_AddRef(msgClient->CreateMessage(NC_EOSS_MSGID_WRITE_DATA)); [[ncEOSSMessageClient.CreateMessage]]
+****** 【激活写缓存,当前buf大小>buf最大值或请求长度>=buf最大值,请求数等于1】ncEOSSChunkWriteClient.cpp 399 netmsg->SetOutputBodyBuffer(writeDataBuffs[0]);
+****** 【激活写缓存,当前buf大小>buf最大值或请求长度>=buf最大值,请求数等于1】ncEOSSChunkWriteClient.cpp 401 msgClient->PostMessage(netmsg); [[ncEOSSMessageClient.PostMessage]]
+****** 【激活写缓存】ncEOSSChunkWriteClient.cpp _writeBatch.writeRequests.push_back(writeRequest);
+****** 【激活写缓存】ncEOSSChunkWriteClient.cpp _writeDataBuffs.push_back(blockBuffer);
+***** TODO 【重删,非重复数据片】ncEOSSObjectWriter.cpp 362 dataClient->WriteDataBlockData(blockId, sendData);
+***** TODO 【重删,重复数据片】ncEOSSObjectWriter.cpp 368 dataClient->CheckDataBlockData(sendData, storageLength);
+***** TODO 【重删,重复数据片】ncEOSSObjectWriter.cpp 372 OnWriteDataBlockData(blockId, chunkId, storageLength);
+*** 【END_OBJECT】ncEOSSDataWriteClient.cpp 836 OnEndDataObject(sendData.objectId);
+**** ncEOSSDataWriteClient.cpp 880 nsCOMPtr<ncEOSSObjectWriter> objectWriter = _pObjectWriterFactory->FindObjectWriter(objectId);
+**** ncEOSSDataWriteClient.cpp 882 objectWriter->OnEndObject();
+***** ncEOSSObjectWriter.cpp 218 ncEOSSObjectWriter.OnEndObject() 函数入口
+***** 【完成状态】Sync()或者OnCompleteObject()
+***** 【中止状态】OnAbortObject()
+*** 【SPACE_FULL】ncEOSSDataWriteClient.cpp 839 HandleDataStorageSpaceFull(sendData.objectId); // 此处objectId实际存储值为storageId
+**** 释放标记为 full 的通道
+**** ncEOSSDataWriteClient.cpp 943 nsCOMPtr<ncEOSSChunkWriteClient> chunkClient = _pChunkClientFactory->FindChunkClient(storageId);
+**** ncEOSSDataWriteClient.cpp 945 chunkClient->CloseDataStorage();
+**** ncEOSSDataWriteClient.cpp 946 chunkClient->Abort();
+**** ncEOSSDataWriteClient.cpp 951 _pChunkClientFactory->FreeChunkClient(storageId);
+**** 一些数据块需要发送，使用其它 data 节点，开启一个新通道
+**** 【多节点服务】ncEOSSDataWriteClient.cpp 960 newStorageId = _pChunkClientFactory->AllocChunkClient(_pConfig->GetStoragePool(), _eossClient, this);
+**** 【单节点服务】ncEOSSDataWriteClient.cpp 963 newStorageId = _pChunkClientFactory->AllocChunkClientUnique(_pConfig->GetStoragePool(), storageId, _eossClient, this);
+**** ncEOSSDataWriteClient.cpp 965 vNeedReWriteObjs = _pObjectWriterFactory->Update(storageId, newStorageId);
+**** 使用新通道，重新发送之前写失败的数据
+**** 【遍历 vNeedReWriteObjs】ncEOSSDataWriteClient.cpp elem->ReWriteDataBlockData();
+*** 【SYNC_DEDUP】ncEOSSDataWriteClient.cpp 842 nsCOMPtr<ncIEOSSDataDedupe> dedupTool = dont_AddRef(GetDedupTool());
+*** 【SYNC_DEDUP】ncEOSSDataWriteClient.cpp 844 dedupTool->Flush();
+*** 【SYNC_DEDUP】ncEOSSDataWriteClient.cpp 848 auto vStorageId = _pChunkClientFactory->ListAllStorageId();//BeginTimepoint()之前此处为emptyauto vStorageId = _pChunkClientFactory->ListAllStorageId();//BeginTimepoint()之前此处为empty
+*** 【SYNC_DEDUP】ncEOSSDataWriteClient.cpp 850 nsCOMPtr<ncEOSSChunkWriteClient> chunkClient = _pChunkClientFactory->FindChunkClient(storageId);
+*** 【SYNC_DEDUP】ncEOSSDataWriteClient.cpp 851 chunkClient->Sync();
+*** 【SYNC_DEDUP】ncEOSSDataWriteClient.cpp 855 _pObjectWriterFactory->BatchSync();
+*** 【EMPTY_SEND】什么都不做
+
+* 不那么底层的EOSSClient
+** resourceManager = do_CreateInstance(NC_RESOURCE_MGM_CONTRACTID, &rv); 创建资源管理器
+*** 单例，通过id和do_CreateInstance创建
+*** 用于创建GNS对象（时间点对象）、数据对象、数据块对象
+** essClient = dont_AddRef(ncESSClientFactory::CreateClient(writeOptions); 创建essClient对象（ncEOSSClient）
+*** 通过工厂创建（工厂内部也是用id和do_CreateInstance实际创建）
+*** 参数作用就是区分eoss和ecss
+** essClient->SetListener(this); 设置两个接口(OnMessage和OnWarning）
+*** 并未用到
+** essClient->Login(); 创建内部要用的变量，尝试连接到node节点
+*** 创建(ncEOSSNodeClient)并调用其Login,赋值给内部成员变量(_nodeClient)
+*** 创建(ncEOSSMetaClientFactory),赋值给内部成员变量(_metaClientFactory)
+** dataWriter = dont_AddRef(essClient->GetWriteClient());
+*** 创建数据传输对象（ncEOSSDataWriteClient）
+*** GetWriteClient 返回新建的(ncEOSSDataWriteClient)，并设置限速
+** dataWriter->Start(); 启动数据传输对象
+*** 填写请求MetaServer参数（job，storagePool,needAlloc）
+*** nsCOMPtr<ncIEOSSNodeClient> nodeClient = dont_AddRef(_eossClient->GetNodeClient());
+**** 通过ncEOSSClient(essClient)获得ncEOSSNodeClient(_nodeClient)
+*** nodeClient->GetMetaServer(reply, request); 获取MetaServer信息
+**** 给nodeserver发消息，阻塞到回复
+*** nsCOMPtr<ncEOSSMetaClient> eossMetaClient = NC_NEW(_alloc, ncEOSSMetaClient)(_alloc); 创建metaclient
+*** eossMetaClient->SetOptions(_writeOptions); 设置参数
+*** eossMetaClient->Login(reply.serverIp, reply.serverPort); 尝试连接到meta节点
+*** 填写初始化写请求参数（很多，jobInfo、cid）
+*** eossMetaClient->InitWrite(writeReply, writeRequest); 发送写初始化消息
+*** eossMetaClient->SetWriteListener(this); 设置接口 OnWriteDataBlockIndex,NotifyIndexException
+*** _metaClient = eossMetaClient; 赋值给内部成员变量
+*** ncThread(ncEOSSWriteProcessRunner(this)).detach(); 调用ProcessData
+**** 从队列中取出要发送的数据，根据类型分别调用
+**** OnWriteDataBlock(sendData); SEND_BLOCK
+**** OnEndDataObject(sendData.objectId); END_OBJECT
+**** HandleDataStorageSpaceFull(); SPACE_FULL
+** nsCOMPtr<ncITimepointObject> timepointObj = dont_AddRef((ncITimepointObject *)resourceManager->CreateGNSObject(tpGNS)); 创建时间点对象
+** 对timepointObj做基本设置
+** dataWriter->BeginTimepointObject(timepointObj); 开始处理时间点对象
+*** nsCOMPtr<ncEOSSMetaClient> metaClient = dont_AddRef(GetMetaClient()); 取出metaclient
+*** 填写分配数据存储信息请求ncAllocDataStorageInfoRequest
+*** metaClient->AllocDataStorageInfo(allocReply, allocRequest); 选取一个新的数据节点
+*** 利用返回的信息填写请求数据服务的请求ncGetDataServerRequest
+*** nsCOMPtr<ncIEOSSNodeClient> nodeClient = dont_AddRef(_eossClient->GetNodeClient()); 取出nodeclient
+*** nodeClient->GetDataServer(dsreply, dsrequest); 获取DataServer信息
+*** 利用返回的信息填写服务信息
+*** nsCOMPtr<ncEOSSChunkWriteClient> dataClient = NC_NEW(eossClientAlloc, ncEOSSChunkWriteClient)(eossClientAlloc, this); 创建dataclient
+*** dataClient->SetDataListener(_eossClient->GetDataListener()); 设置接口OnMessage和OnWarning
+*** dataClient->SetServerInfo(serverInfo, _writeOptions.dataThreadCount, _writeOptions.enableDedup?4096:4194304); 设置服务信息
+*** dataClient->Start(); 启动数据块传输
+**** nsCOMPtr<ncEOSSMetaClient> msgClient = NC_NEW(_alloc, ncEOSSMetaClient)(_alloc, this); 创建消息client
+**** msgClient->Connect(_serverInfo.serverIp, _serverInfo.serverPort, _serverInfo.clientPort, _serverInfo.detectTime, NC_EOSS_APP_PORT_DATA_SERVER); 连接到data服务节点
+**** 发送Login消息
+**** _msgClient = msgClient; 赋值给内部成员变量
+*** dataClient->SetFlowControl(_flowLimit); 设置限速
+*** bool isCreated = dataClient->CreateDataStorage(allocReply.storageInfo.storagePool, allocReply.storageInfo.storageId);
+**** 取msgClient;
+**** 发创建数据块存储消息
+*** _chunkClient = dataClient;
+*** metaClient->CreateTimepointObject(writeReply, writeRequest); 发送创建时间点对象消息给meta节点
+** nsCOMPtr<ncIDataObject> dataObject = getter_AddRefs(resourceManager->CreateDataObjectgns(gns)); 创建数据块对象
+** 取出dataObject的元数据，写入文件名，设置拓展属性，设置显示名
+** nsCOMPtr<ncIESSObjectWriter> objectWriter = dont_AddRef(dataWriter->WriteDataObject(dataObject)); 获得写数据对象
+*** nsCOMPtr<ncEOSSMetaClient> metaClient = dont_AddRef(GetMetaClient());
+*** 设置属性
+*** metaClient->CreateDataObject(writeReply, writeRequest); 发送创建数据对象消息给meta节点
+*** nsCOMPtr<ncEOSSObjectWriter> objectWriter = new ncEOSSObjectWriter(dataObject, this); 创建写对象
+*** objectWriter->SetObjectId(writeReply.objectId); 使用返回的对象id设置给写对象
+*** objectWriter->SetSynthesis(_writeOptions.sysnthesizeBlocks); 是否需要数据块合成
+*** 如果在缓存中，则出错。
+*** 放入缓存中,并返回objectWriter.get();
+** 打开要传输的文件
+** 【进入循环】
+** nsCOMPtr<ncIDataBlock> dataBlock = getter_AddRefs(resourceManager->CreateDataBlock(dataObject, offset));
+** unsigned char *buf = dataBlock->CreateWriteBuffer(dataBlkSize); 申请数据块，每次调用会释放之前分配的数据块，然后重新分配
+** 读文件内容到buf里，设置长度，大小偏移操作
+** objectWriter->WriteDataBlock(dataBlock);
+** 【结束循环】

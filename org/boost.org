@@ -1,0 +1,228 @@
+* boost
+
+** 基本原理
+*** Asio
+**** 命名空间
+***** boost::asio: 这是核心类和函数所在的地方
+      重要的类有 io_service和streambuf
+      类似 read,read_at,read_until 方法，他们的异步方法，写方法和异步写方法等自由函数
+***** boost::asio::ip: 这是网络通信部分所在的地方
+      重要的类有 address,endpoint,tcp,udp和icmp
+      重要的自由函数有 connect和async_connect
+      要注意的是在 boost::asio::ip::tcp::socket 中间，socket 只是 boost::asio::ip::tcp 类中间的一个typedef关键字
+***** boost::asio::error: 包含了调用I/O例程时返回的错误码
+***** boost::asio::ssl: 包含了SSL处理类
+***** boost::asio::local: 包含了POSIX特性的类
+***** boost::asio::windows: 包含了Windows特性的类
+**** IP地址
+***** 三个类
+      ip::address
+      ip::address_v4
+      ip::address_v6
+***** 最重要的函数
+****** ip::address(v4_or_v6_address) 把一个v4或者v6地址转换成ip::address
+****** ip::address::from_string(str) 根据一个ipv4地址(用.隔开)或者一个ipv6地址创(十六进制表示)建一个地址
+****** ip::address::to_string() 返回这个地址的字符串
+****** ip::address_v4::broadcast([addr,mask]) 创建一个广播地址
+****** ip::address_v4::any() 返回一个能表示任意地址的地址
+****** ip::address_v4::loopback(),ip::address_v6::loopback() 返回环路地址(v4/v6)
+****** ip::host_name() 返回当前主机名(string类型)
+**** 端点(endpoint)
+     使用某个端口连接到的一个地址
+     ip::tcp::endpoint,ip::udp::endpoint,ip::icmp::endpoint
+***** 例，连接到本机的80端口
+      ip::tcp::endpoint ep(ip::address::from_string("127.0.0.1"), 80);
+***** 构造方法
+****** endpoint() 默认构造，某些时候可以用来创建UDP/ICMP socket
+****** endpoint(protocol, port) 通常用来创建可以接受新连接的服务端socket
+****** endpoint(addr, port) 创建一个连接到某个地址和端口的端点
+****** 例
+       ip::tcp::endpoint ep1;
+       ip::tcp::endpoint ep2(ip::tcp::v4(), 80);
+       ip::tcp::endpoint enp3(ip::address::from_string("127.0.0.1"), 80);
+***** 连接到一个主机（不是IP地址）
+      可以用其它的socket类型替换tcp
+      创建一个查询器，用resolve()函数解析。如果成功，至少会返回一个入口。可以用返回的迭代器拿到全部入口
+****** 代码如下
+       // output "87.248.122.122"
+       io_service service;
+       ip::tcp::resolver resolver(service);
+       ip::tcp::resolver::query query("www.yahoo.com", "80");
+       ip::tcp::resolver::iterator iter = resolver.resolve(query);
+       ip::tcp::endpoint ep = *iter;
+       std::cout << ep.address().to_string() << std::endl;
+***** 获得地址，端口和IP协议 protocol()不能直接输出
+      std::cout << ep.address().to_string() << ":" << ep.port() << "/" << ep.protocol() << std::endl;
+**** 套接字(socket)
+***** 三种类型的套接字类 ip::tcp,ip::udp和ip::icmp
+      也可以创建自己的socket类，参照boost/asio/ip/tcp.hpp,udp.hpp,icmp.hpp
+      都是含有内部typedef关键字的超小类
+***** 当作占位符，便捷地访问其它类/函数
+      ip::tcp::socket, ip::tcp::endpoint, ip::tcp::resolver, ip::tcp::acceptor, ip::tcp::iostream
+      ip::udp::socket, ip::udp::endpoint, ip::udp::resolver
+      ip::icmp::socket,ip::icmp::endpoint,ip::icmp::resolver
+***** 创建一个相应的socket,在构造时传入io_service实例
+      io_service service;
+      ip::udp::socket sock(service);
+      sock.set_option(ip::udp::socket::reuse_address(true));
+***** 每一个socket的名字都是一个typedef关键字
+      ip::tcp::socket  = basic_stream_socket
+      ip::udp::socket  = basic_datagram_socket
+      ip::icmp::socket = basic_raw_socket
+**** 同步错误码
+     所有的同步函数都有抛出异常或者返回错误码的重载
+     sync_func(arg1,arg2...,argN); // 抛出异常
+     boost::system::error_code ec;
+     sync_func(arg1,arg2...,argN,ec); // 返回错误码
+**** 连接相关的函数
+     用来连接或绑定socket、断开socket连接以及查询连接是否活动还是非活动
+***** assign(protocol, socket) 分配一个原生的socket给socket实例
+      当处理老相程序时会使用它，也就是说，原生socket已经被建立
+***** open(protocol) 用给定的IP协议(v4/v6)打开一个socket
+      主要在udp/icmp socket，或者服务端socket上使用
+***** bind(endpoint) 绑定到一个地址
+***** connect(endpoint) 用同步的方式连接到一个地址
+***** async_connect(endpoint) 用异步的方式连接到一个地址
+***** is_open() 如果套接字已经打开，返回true
+***** close() 用来关闭套接字
+      调用时这个套接字上任何的异步操作都会被立即关闭，同时返回error::operation_aborted错误码
+***** shutdown(type_of_shutdown) 立即使send或者receive操作失效，或两者都失效
+***** cancel() 取消套接字上所有的异步操作
+      这个套接字上任何的异步操作都会立即结束，然后返回error::operation_aborted错误码
+***** 例
+      ip::tcp::endpoint ep(ip::address::from_string("127.0.0.1"), 80);
+      ip::tcp::socket sock(service);
+      sock.open(ip::tcp::v4());
+      sock.connect(ep);
+      sock.write_some(buffer("GET /index.html\r\n"));
+      char buff[1024];
+      sock.read_some(buffer(buff,1024));
+      sock.shtdown(ip::tcp::socket::shutdown_receive);
+      sock.close();
+**** 读写函数
+     在套接字上执行I/O操作的函数
+     对于异步函数来说，处理程序的格式void handler(const boost::system::error_code &e, size_t bytes)都是一样的
+***** async_receive(buffer[, flags], handler) 启动从套接字异步接收数据的操作
+***** async_read_some(buffer, handler) 和async_receive功能一样
+***** async_receive_from(buffer, endpoint[, flags], handler) 启动从一个指定端点异步接收数据的操作
+***** async_send(buffer[, flags], handler) 启动一个异步发送缓冲区数据的操作
+***** async_write_some(buffer, handler) 和async_send功能一样
+***** async_send_to(buffer, endpoint, handler) 启动一个异步send缓冲区数据到指定端点的操作
+***** receive(buffer[, flags]) 异步地从所给的缓冲区读取数据
+      在读完所有的数据或者错误出现之前，阻塞
+***** read_some(buffer) 和receive功能一样
+***** receive_from(buffer, endpoint[, flags]) 异步地从一个指定的端点获取数据并写入到给定的缓冲区
+      在读完所有的数据或者错误出现之前，阻塞
+***** send(buffer[, flags]) 同步地发送缓冲区的数据
+      在所有数据发送成功或者错误出现之前，阻塞
+***** write_some(buffer) 和send功能一样
+***** send_to(buffer, endpoint[, flags]) 同步地把缓冲区数据发送到一个指定的端点
+      在所有数据发送成功或者错误出现之前，阻塞
+***** available() 返回有多少字节数据可以无阻塞地进行同步读取
+***** 标记
+      默认值为0
+****** ip::socket_type::socket::message_peek 只监测并返回某个消息，下次读消息的调用会重新读取这个消息
+****** ip::socket_type::socket::message_out_of_band 处理带外(OOB)数据
+       OOB数据是被标记为比正常数据更重要的数据
+****** ip::socket_type::socket::message_do_not_route 指定数据不使用路由表来发送
+****** ip::socket_type::socket::message_end_of_record 指定的数据标识了记录的结束，Windows下不支持
+***** 例1 在一个TCP套接字上进行同步读写
+      ip::tcp::endpoint ep(ip::address::from_string("127.0.0.1"), 80);
+      ip::tcp::socket sock(service);
+      sock.connect(ep);
+      sock.write_some(buffer("GET /index.html\r\n"));
+      std::cout << "bytes available " << sock.available() << std::endl;
+      char buff[512] = {0};
+      size_t read = sock.read_some(buffer(buff));
+***** 例2 在一个UDP套接字上进行同步读写
+      ip::udp::socket sock(service);
+      sock.open(ip::udp::v4());
+      ip::udp::endpoint rep("87.248.112.181", 80);
+      sock.send_to(buffer("testing\n"), rep);
+      char buff[512] = {0};
+      ip::udp::endpoint sep;
+      sock.receive_from(buffer(buff), sep);
+      [注意，使用receive_from从一个UDP套接字读取数据时，你需要构造一个默认的端点]
+***** 例3 从一个UDP服务套接字中异步读取数据
+      using namespace boost::asio;
+      io_service service;
+      ip::udp::socket sock(service);
+      boost::asio::ip::udp::endpoint sep;
+      char buff[512] = {0};
+      void on_read(const boost::system::error_code &e, std::size_t read_bytes) {
+        std::cout << "read " << read_bytes << std::endl;
+        sock.async_receive_from(buffer(buff), sep, on_read);
+      }
+      int main(int argc, char *argv[]) {
+        ip::udp::endpoint ep(ip::address::from_string("127.0.0.1"), 8001);
+        sock.open(ep.protocol());
+        sock.set_option(ip::udp::socket::reuse_address(true));
+        sock.bind(ep);
+        sock.async_receive_from(buffer(buff, 512), sep, on_read);
+        service.run();
+      }
+**** 套接字控制
+***** 处理套接字高级选项的函数
+****** get_io_service() 返回构造函数中传入的io_service实例
+****** get_option(option) 返回一个套接字的属性
+****** set_option(option) 设置一个套接字的属性
+****** io_control(cmd) 在套接字上执行一个I/O指令
+***** 选项
+****** broadcast                 (bool)   如果为true，允许广播消息
+****** debug                     (bool)   如果为true，启用套接字级别的调试
+****** do_not_route              (bool)   如果为true，则阻止路由选择只使用本地接口
+****** enable_connection_aborted (bool)   如果为true，记录在accept()时中断的连接
+****** keep_alive                (bool)   如果为true，会发送心跳
+****** linger                    (bool)   如果为true，套接字会在有未发送数据的情况上挂起close()
+****** reuse_address             (bool)   如果为true，套接字能绑定到一个已用的地址
+****** ip::v6_only               (bool)   如果为true，则只允许IPv6的连接
+****** receive_buffer_size       (int)    套接字接收缓冲区大小
+****** receive_low_watemark      (int)    规定套接字输入处理的最小字节数
+****** send_buffer_size          (int)    套接字发送缓冲区大小
+****** send_low_watermark        (int)    规定套接字数据发送的最小字节数
+***** 每个名字代表了一个内部套接字typedef或者类，使用如下
+      ip::tcp::endpoint ep(ip::address::from_string("127.0.0.1"), 80);
+      ip::tcp::socket sock(service);
+      sock.connect(ep);
+      ip::tcp::socket::reuse_address ra(true);
+      sock.set_option(ra);
+      ip::tcp::socket::receive_buffer_size rbs;
+      sock.get_option(rbs);
+      std::cout << rbs.value() << std::endl;
+      ip::tcp::socket::send_buffer_size sbs(8192);
+      sock.set_option(sbs);
+      [上述调用，套接字要被打开，否则，抛异常]
+**** TCP vs UDP vs ICMP
+     如果没在下列表中，则都可用
+***** 名字                TCP   UDP   ICMP
+***** async_read_some     是    -      -
+***** async_receive_from  -     是     是
+***** async_write_some    是    -      -
+***** async_send_to       -     是     是
+***** read_some           是    -      -
+***** receive_from        -     是     是
+***** write_some          是    -      -
+***** send_to             -     是     是
+**** 其它方法 与连接和I/O无关的函数
+***** local_endpoint() 返回套接字本地连接的地址
+***** remote_endpoint() 返回套接字连接到的远程地址
+***** native_handle() 返回原始套接字的处理程序
+      你只有在调用一个Boost.Asio不支持的原始方法时才需要用到
+***** non_blocking() 如果套接字是非阻塞的，返回true，否则返回false
+***** native_non_blocking() 如果套接字是非阻塞的，返回true，否则返回false  但是
+      它是基于原生的套接字来调用本地api，所以通常来说，你不需要调用这个方法(non_blocking()已经缓存了这个结果)
+      只有在直接调用native_handle()这个方法的时候才需要用到这个方法
+***** at_mark() 如果套接字要读的是一段OOB数据，返回true   很少会用到
+**** 套接字实例不能被拷贝，拷贝构造方法和=操作符是不可访问的
+     因为那将要处理所有者问题
+     如果要创建一个备份，使用共享指针
+***** 例
+      typedef boost::shared_ptr<ip::tcp::socket> socket_ptr;
+      socket_ptr sock1(new ip::tcp::socket(service));
+      socket_ptr sock2(sock1); // ok
+      socket_ptr sock3;
+      sock3 = sock1; // ok
+**** 套接字缓冲区
+
+** x
+

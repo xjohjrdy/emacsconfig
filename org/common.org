@@ -1,0 +1,6 @@
+* 常用命令
+** 查看端口占用
+*** Windows
+    netstat -ano | findstr "9641"
+*** Linux
+    netstat -natp | grep 9641

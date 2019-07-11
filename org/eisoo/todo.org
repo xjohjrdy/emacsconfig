@@ -1,0 +1,63 @@
+* TODO 熟悉ab架构及软件
+  DEADLINE: <2019-04-15 周一 18:00> SCHEDULED: <2019-04-15 周一 10:00>
+** DONE 术语定义
+   CLOSED: [2019-04-15 周一 11:41]
+** 软件架构
+   soa架构，以服务分，内部用Thirft接口，外部用Rest接口
+** DONE 安装软件
+   CLOSED: [2019-04-15 周一 16:12]
+   安装服务端参数： ./install.sh --product=CDM --server-type=MASTER --self-ip=10.2.0.245 --cluster-id=43 --cluster-vip=10.2.0.192 --install-db=yes --db-id=105 --db-vip=10.2.0.153 --ntp-server=10.2.0.153
+   安装客户端: ./install.sh
+** DONE 使用软件
+   CLOSED: [2019-04-16 周二 09:53]
+   测试授权90天, @anybackup/7.0/test/90
+   注册码：	A7T90-4FLXH-FHF90-3T8EC-Y38AU-83NRR
+   激活码：	XSKVT1K91FVK3C92
+   根据服务端配置的cluster-vip地址登录管理界面，两个管理账户，admin默认密码P@ssword123，用于管理人，管理操作员；sadmin默认密码相同，用于管理操作员、分配机器
+   将密码都改为eisoo.com123
+   添加OFS卷和元数据卷
+   登录操作员进行备份及恢复操作
+
+
+* 结合文档看代码
+
+* 搭建三副本存储
+** 术语
+   ESXi : VMWare虚拟化管理程序
+   VLAN : Virtual Local Area Netowrk 虚拟局域网
+   VNC  : Virtual Netowrk Console 虚拟网络控制台，一款远程控制工具软件
+** 过程步骤
+*** 设备上架，安装，网络连接
+    装硬盘，装网卡，接网线
+    千兆接千兆，万兆接万兆(光纤线)
+*** 每个节点安装ESXi
+    挂载ESXi安装包，安装，设置登录密码，安装规划配置网络（安装位置选择SATA DOM盘）
+*** 其中一个节点安装vCenter
+    双击安装，看着配置填点下一步
+*** vCenter创建数据中心、集群、添加ESXi到集群
+    看着点
+*** 配置HA、DRS等
+    同上
+*** 配置网络
+    vMotion网络、SCVM存储网络、NFS网络
+*** 配置RAID卡直通
+    看着点
+*** 安装VAAI插件
+    ssh到每台ESXi后台 上传插件到根目录，安装命令:esxcli software vib install -v /anyvm-edfsnasplugin-XXXX.vib --no-sig-check
+*** 配置ESXi高级设置
+    ssh到每台ESXi后台 执行:
+    esxcfg-advcfg -s 30 /NFS/HeartbeatTimeout
+    esxcfg-advcfg -s 64 /NFS/MaxVolumes
+    esxcfg-advcfg -s 0 /Misc/APDHandlingEnable
+    esxcfg-advcfg -s 32 /Net/TcpipHeapSize
+    esxcfg-advcfg -s 512 /Net/TcpipHeapMax
+    esxcfg-advcfg -s 1 /UserVars/SuppressShellWarning
+    重启
+*** 安装SCVM虚拟机
+    都点点点
+*** 搭建AnyVM集群
+*** 创建并挂载数据存储
+*** 完成
+
+* DONE 22号培训
+  CLOSED: [2019-04-26 周五 10:12] SCHEDULED: <2019-04-22 周一> DEADLINE: <2019-04-22 周一>

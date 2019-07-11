@@ -1,0 +1,183 @@
+* cmake
+** 约定
+	 指令大小写无关
+	 参数和变量是大小定相关的
+	 推荐全部大写指令
+	 文件名有空格可用引号包起来
+** 参数
+	 用括号包裹，参数之前用空格或分号分开
+** 变量
+	 使用${}来引用，在IF控制语句中，直接使用变量名引用
+*** 预定义
+**** CMAKE_BINARY_DIR
+**** PROJECT_BINARY_DIR
+**** <projectname>_BINARY_DIR
+		 指向编译目录
+**** CMAKE_SOURCE_DIR
+**** PROJECT_SOURCE_DIR
+**** <projectname>_BINARY_DIR
+		 指向工程顶层目录
+**** CMAKE_CURRENT_SOURCE_DIR
+		 当前处理的CMakeLists.txt所在路径
+**** CMAKE_CURRENT_BINARY_DIR
+		 内部编译，和CMAKE_SURRENT_SOURCE_DIR一致
+		 外部编译，指向target编译目录
+		 受ADD_SUBDIRECTORY(src bin)更改；SET(EXECUTABLE_OUTPUT_PATH <path>)不影响其值
+**** CMAKE_CURRENT_LIST_FILE
+		 输出调用这个变量的CMakeLists.txt的完整路径
+**** CMAKE_CURRENT_LIST_LINE
+		 输出这个变量所在的行
+**** CMAKE_MODULE_PATH
+		 定义自己的cmake模块所在的路径
+		 SET(CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
+		 然后就可以用INCLUDE调用自己的模块了
+**** EXECUTABLE_OUTPUT_PATH
+		 最终的目标二进制的位置，不包含编译生成的中间文件
+**** LIBRARY_OUTPUT_PATH
+		 最终的共享库位置，不包含编译生成的中间文件
+**** SRC_LIST
+		 应该是源文件列表
+**** PROJECT_NAME
+		 PROJECT指令定义的名称
+**** CMAKE_INSTALL_PREFIX
+		 类似于configure里的--prefix，常见使用方式为
+		 cmake -DCMAKE_INSTALL_PREFIX=/usr
+**** OUTPUT_NAME (SET_TARGET_PROPEERTIES)
+		 应该是用做target输出名称的一个属性名
+**** CLEAN_DIRECT_OUTPUT (SET_TARGET_PROPEERTIES)
+		 看名字像是直接清除，但是好像是用来共存的
+**** VERSION (SET_TARGET_PROPEERTIES)
+		 动态库版本
+**** SOVERSION (SET_TARGET_PROPEERTIES)
+		 API版本
+** 关键字（指令）
+*** PROJECT
+**** 语法
+		 PROJECT(projectname [CXX][C][Java])
+**** 注释
+		指定工程名称。也可指定语言，默认支持全部
+		隐式定义了两个cmake变量：<projectname>_BINARY_DIR 和 <projectname>_SOURCE_DIR
+		分为内部构建和外部构建
+		cmake预定义了PROJECT_BINARY_DIR 和 PROJECT_SOURCE_DIR，值和上述变量一致
+*** SET
+**** 语法
+		 SET(VAR [VALUE][CACHE TYPE DOCSTRING [FORCE])
+**** 注释
+		 显式定义变量
+*** MESSAGE
+**** 语法
+		 MESSAGE([SEND_ERROR|STATUS|FATAL_ERROR] "some message to display"...)
+**** 注释
+		 向终端输出用户定义的信息，三类
+		 SEND_ERROR：产生错误，生成过程被跳过
+		 STATUS：输出前缀为——的信息
+		 FATAL_ERROR：立即终止所有cmake过程
+*** ADD_EXECUTABLE
+**** 语法 
+		 ADD_EXECUTABLE(<exe> <filename>...)
+**** 注释
+		 应该是添加要生成可执行程序
+*** ADD_LIBRARY
+**** 语法
+		 ADD_LIBRARY(libname [SHARED|STATIC|MODULE]
+		 [EXCLUDE_FROM_ALL]
+		 source1 source2 ... sourceN)
+**** 注释
+		 动态库，静态库，MODULE在使用dyld系统有效，否则当SHARED
+		 EXCLUDE_FROM_ALL表示这个库不会默认构建，除非有其他组件依赖或手工构建
+		 指定的taget名称是唯一的，否则会失效
+*** SET_TARGET_PROPEERTIES
+**** 语法
+		 SET_TARGET_PROPEERTIES(target1 target2 ...
+		 PROPEERTIES prop1 value1 prop2 value2 ...)
+**** 注释
+		 用来设置输出的名称，对于动态库，还可以指定版本和API版本
+**** 例
+		 SET_TARGET_PROPERTIES(hello_static PROPERTIES OUTPUT_NAME "hello")
+		 把hello_static这个target的输出名改到hello
+*** GET_TARGET_PROPERTY
+**** 语法
+		 GET_TARGET_PROPERTY(VAR target property)
+**** 例
+		 GET_TARGET_PROPERTY(OUTPUT_VALUE hello_static OUTPUT_NAME)
+		 把hello_static的OUTPUT_NAME赋值给OUTPUT_VALUE，如果没有这个属性定义，则返回NOTFOUND
+*** ADD_SUBDIRECTOYR
+**** 语法
+		 ADD_SUBDIRECTOYR(source_dir [binary_dir] [EXCLUDE_FROM_ALL])
+**** 注释
+		 向当前工程添加存放源文件的子目录，并指定中间二进制和目标二进制存放的位置
+		 EXCLUDE_FROM_ALL 参数是将这个目录从编译过程中排除
+*** INSTALL
+		用于定义安装规则，安装的内容可以包括目标二进制、动态库、静态库及文件、目录、脚本等
+**** 目标文件的安装
+***** 语法
+			 INSTALL(TARGETS targets...
+			 [[ARCHIVE|LIBRARY|RUNTIME]
+			 [DESTINATION <dir>]
+			 [PERMISSIONS permissions...]
+			 [CONFIGURATIONS [Debug|Release|...]]
+			 [COMPONENT <component>]
+			 [OPTIONAL]
+			 ][...])
+***** 注释
+			 参数中TARGETS后面跟的就是我们通过ADD_EXECUTABLE或者ADD_LIBRARY定义的目标文件，可能是可执行二进制、动态库、静态库。
+			 目标类型就是对应的三种
+			 DESTINATION定义了安装的路径，如果以/开头，就是绝对路径，这时候CMAKE_INSTALL_PREFIX就无效了，如果你想用，就要写相对路径，安装后路径为${CMAKE_INSTALL_PREFIX}/<DESTINATION定义的路径>
+***** 例：
+			INSTALL(TARGETS myrun mylib mystaticlib
+			RUNTIME DESTINATION bin
+			LIBRARY DESTINATION lib
+			ARCHIVE DESTINATION libstatic
+			)
+			安装到前缀为${CMAKE_INSTALL_PREFIX}加上路径的目录中
+			不需要关心TARGETS具体生成的路径，只需要写上TARGETS名称就行
+**** 普通文件的安装
+***** 语法
+			INSTALL(FILES files... DESTINATION <dir>
+			[PERMISSIONS permissions...]
+			[CONFIGURATIONS [Debug|Release|...]]
+			[COMPONENT <component>]
+			[RENAME <name>][OPTIONAL])
+***** 注释
+			用于安装一般文件，并可指定访问权限，文件名是此指令所有路径下的相对路径。默认权限644
+**** 非目标文件的可执行程序安装（比如脚本之类）
+***** 语法
+			INSTALL(PROGRAMS files... DESTINATION <dir>
+			[PERMISSIONS permissions...]
+			[CONFIGURATIONS [Debug|Release|...]]
+			[COMPONENT <component>]
+			[RENAME <name>][OPTIONAL])
+***** 注释
+			跟上述FILES指令一样，不同是默认权限为755
+**** 目录的安装
+***** 语法
+			INSTALL(DIRECTORY dirs... DESTINATION <dir>
+			[FILE_PERMISSIONS permissions...]
+			[DIRECTORY_PERMISSIONS permissions...]
+			[USE_SOURCE_PERMISSIONS]
+			[CONFIGURATIONS [Debug|Release|...]]
+			[COMPONENT <component>]
+			[[PATTERN <pattern>|REGEX <regex>]
+			[EXCLUDE] [PERMISSIONS permissions...]] [...])
+***** 注释
+			DIRECTORY后面接所在Source目录的相对路径，务必注意abc和abc/有很大区别，不以/结尾，这个目录将安在目标路径下的abc；以/结尾，表示将这个目录的内容安装到目标路径，但不包括这个目录本身
+			PATTERN用于使用正则进行过滤
+			PERMISSIONS用于指定PATTERN过滤后的文件权限
+***** 例
+			INSTALL(DIRECTORY icons scripts/ DESTINATION share/myproj
+			PATTERN "CVS" EXCLUDE
+			PATTERN "scriptes/*"
+			PERMISSIONS OWNER_EXECUTE OWNER_WRITE OWNER_READ GROUP_EXECUTE GROUP_READ)
+			表示将icon目录安装到<prefix>/share/myproj，将scripts/中的内容安装到<prefix>/share/myproj
+			不包含目录名为CVS的目录，对于scripts/*文件指定权限为xxx
+**** 脚本的安装？
+***** 语法
+			INSTALL([[SCRIPT <file>] [CODE <code>]][...])
+***** 注释
+			SCRIPT参数用于在安装时调用cmake脚本文件（就是<abc>.cmake文件）
+			CODE参数用于执行CMAKE指令，必须用双引号包起来
+***** 例
+			INSTALL(CODE "MESSAGE("xxx install message")")
+** 调用环境变量
+*** $ENV{NAME}
+*** SET(ENV{NAME} value)

@@ -1,0 +1,130 @@
+* 方便
+  E:\gitlab\Apollo\apollo\src\cpp\services\eoss
+  E:\gitlab\share\src\ut_eoss_nodemanager
+  E:\gitlab\share\src\ut_eoss_client
+  export LD_LIBRARY_PATH="$(pwd)"
+
+
+* 4个服务
+** EOSSDataService.service
+   使用datachannel与客户端进行通信，传输数据内容
+*** 配置文件 eoss_data_svc.config
+*** id eso_eoss_dataservice
+**** 指向 libeossdataservice.so 动态库文件
+** EOSSMetaService.service
+   使用datachannel与客户端进行通信，传输元数据内容
+*** 配置文件 eoss_meta_svc.config
+*** id eso_eoss_metaservice
+**** 指向 libeossmetaservice.so 动态库文件
+** EOSSNodeService.service
+   使用datachannel与其它节点进行通信，接收客户端连接请求，返回分配节点信息
+*** 配置文件 eoss_node_svc.config
+*** id eso_eoss_nodeservice
+**** 指向 libeossnodemanager.so 动态库文件
+** EOSSMgmService.service
+   做一些数据管理、清理等工作
+*** 配置文件 eoss_mgm_svc.config
+*** id eso_eoss_datacleanworker
+**** 指向 libeossdataclean.so 动态库文件
+*** id eso_eoss_metamanage
+    添加meta相关的磁盘，删除磁盘呀（元数据卷）
+**** 指向 libeossmetamanage.so 动态库文件
+*** id eso_eoss_datamanage
+    添加data相关磁盘，删除磁盘呀（ofs卷）
+**** 指向 libeossdatamanage.so 动态库文件
+*** id eso_volume_browse
+**** 指向 libvolumeBrowse.so 动态库文件
+
+* 配置文件对应
+** eoss_data.config
+   ncEOSSDataManage的成员thriftServer提供DataService.mgmSvcPort
+   ncEOSSDataService的成员netServer提供DataService.storageSvcPort
+** eoss_meta.config
+   ncEOSSDataCleanWorker提供MetaService.storageSvcPort和MetaCluster.clusterIp
+   ncEOSSMetaManage的成员thriftServer提供MetaService.mgmSvcPort
+   ncEOSSMetaManage提供MetaService.storageSvcPort和MetaCluster.clusterIp
+   ncEOSSMetaService的成员netServer提供MetaService.storageSvcPort
+
+
+
+* 简单的服务结构组成
+** metaService
+   应该是做meta数据的服务，即做meta实际的数据
+** dataService
+   应该是做data数据的服务，即data的实际数据
+** metaMgmService
+   应该是做meta的管理的服务，可能是管理meta怎么分割
+** dataMgmService
+   应该是做data的管理服务，管理data怎么分割
+** cleanService
+   应该是做清理的服务，具体清理数据还是服务节点不知道
+** nodeService
+   应该是对meta和data节点的管理，分配等操作
+   过程大体如下：
+*** 通过ncConfigInfo读取配置文件eoss_data.config和eoss_mata.config
+*** 开启netserver
+    在debug模式下启动meta的storage服务，使nodemanage模块不依赖metaservice
+*** 持有一个storManager成员来管理数据节点/元数据节点
+    内部为raft分布式一致性算法
+
+
+* 整理EOSS部分调用组成关系
+** ncEOSSNodeService
+**** 成员变量
+***** ncIAllocator _pool
+      初始化参数赋值
+      分配池
+***** ncINetServer _netServer
+      在OnStart()中通过do_GetService获得，然后SetMsgHandlerFactory
+      应该是做网络的
+***** ncEOSSNodeClient _nodeClient
+      一个client
+      在UpdateServerInfo()中赋值，设置_pConfig及_nodeId信息，然后Start()
+      也许会多次赋值，待调试后确定
+***** ncEOSSNodeManager _nodeManager
+      做节点管理
+      在UpdateMasterOrJoin()中通过_storManager生成nodemgr，然后赋值给_nodeManager
+***** ncNodeInfoStorageManager _storManager
+      节点信息存储管理
+      首先通过_pConfig生成ncNodeInfoStorageOptions，然后通过NewStorageManager生成
+***** ncEOSSStatWorker _statWorker
+      更新授权容量统计
+      在UpdateServerInfo中赋值设置参数，然后线程分离
+***** ncConfigFileInfo _pConfig
+      配置文件信息，包括eoss_meta和eoss_data的config内容
+      在OnStart()中Load
+***** _nodeId
+**** 成员函数
+***** 构造函数与析构函数
+      初始化为_pool，将_netServer赋值为0
+***** GetMasterIp()
+      通过GetStorageManager()得到_storManager，其实也能直接访问
+      然后判断是否为null，调用其GetMaterIp()方法
+***** GetNodeManager()
+***** GetStorageManager()
+      返回相应成员变量
+***** UpdateServerInfo()
+      在OnStart中开启线程运行，内部调用UpdateMasterOrJoin方法，给_statWorker赋值赋参，然后分离；给_nodeClient赋值赋参，然后Start
+***** getClusterNodeIp()
+***** getClusterNodeport()
+      返回_pConfig中的值
+***** UpdateMasterOrJoin()
+***** LoadStorageManager()
+
+
+** ncEOSSNodeHandler
+*** ncEOSSNodeManager _eossNodeManager
+*** ncEOSSService _nodeService
+    通过初始化列表赋值
+*** onAddClusterNode()
+    输入为ncAddClusterNodeRequest，包含机器码、ip、端口和id
+    输出为ncAddClusterNodeReply，包含成功与否
+    通过_nodeService成员的GetStorageManager方法得到一个ncNodeInfoStorageManager实例，然后调用其AddClusterNode方法添加节点到raft集群中
+*** onDelClusterNode()
+    同上，但多一个如果_eossNodeManager为空，调用其DelNode方法
+*** onChkClusterNode()
+    获得storageManager，调用GetClusterNode方法，返回是否存在请求的节点
+*** onGetClusterNodeInfo()
+    不需要参数
+    获得storageManager，调用GetClusterInfo方法，得到一堆信息
+

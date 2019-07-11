@@ -1,0 +1,9 @@
+* Emacs
+** 插入Doxygen风格注释操作步骤
+	 https://blog.51cto.com/darksun/1404814
+	 https://stackoverflow.com/questions/19259677/using-srecode-to-generate-doxygen-comments-for-an-existing-c-file
+*** M-x semantic-mode   开启semantic-mode
+*** M-: (require 'srecode)  引入srecode
+*** M-x srecode-minor-mode 开启srecode-minor-mode
+*** 移动光标到函数
+*** M-x srecode-document-insert-function-comment 插入

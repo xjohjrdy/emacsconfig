@@ -1,0 +1,82 @@
+* datachannelServer
+** main.cpp 34 nsCOMPtr <ncINetServer> server = do_CreateInstance (NC_NET_SERVER_CONTRACTID, &result);
+*** ncNetServer.cpp 216 ncNetServer(ncIAllocator *alloc) 构造【ncINetServer全是接口】【ncNetServerPipeline】【ncNotifyManager】
+*** 因为他是多继承自三个类，按顺序构造
+*** 【ncINetServer】是个宏定义，也没有成员变量
+*** 【ncNetServerPipeline】ncNetServer.cpp 217 ncNetServerPipeline(alloc, this【ncNetServer】)  初始化列表
+**** ncNetServerPipeline.h 369 ncNetServerPipeline(ncIAllocator *alloc, ncNotifyManager *nm)
+     构造，其中nm为传进来的子类【ncNetServer】
+*** 【ncNotifyManager】ncNotifyManager.cpp 23 ncNotifyManager() 初始化成员变量 _pls 空
+*** 一系列的变量赋值为0或false或初始线程数3
+*** ncNetServer.cpp 232 #<<_tl>> = NC_NEW (_alloc, [[ncTransportServer]]) (_alloc, this);
+**** ncTransportServer.cpp 60 ncTransportServer(ncIAllocator *alloc, ncNotifyManager *nm)
+     构造，其中nm为传进来的【ncNetServer】
+**** ncTransportServer.cpp 61 ncServerPipeline<ncTransportServer>(alloc, nm【ncNetServer】)  初始化列表
+***** ncServerPipeline.h 40 ncServerPipeline(ncIAllocator *alloc, ncNotifyManager *nm)
+      模板构造，其中nm为传进来的【ncNetServer】，T为【ncTransportServer】
+*** ncNetServer.cpp 237 _nm->regPipeline(this); 【这里的_nm是前面构造ncNetServerPipeline传的自己】
+**** ncNotifyManager.cpp 38 加入 _pls 中，如果数量大于1，使用 prev 和 next 把他串起来
+*** ncNetServer.cpp 238 _nm->regPipeline(_tl);
+** main.cpp 63 server->Start();   >>>>>>>>>>>>>>>>>>>>>>>>>> 开启服务
+*** ncNetServer.cpp 556 加锁改变状态为运行
+*** ncNetServer.cpp 578 start(_threadCountCL); 调用继承自【ncNetServerPipeline】的 start 实现
+**** ncNetServerPipeline.cpp 390 新建工作者并多次start，启动check，赋值一些成员变量
+**** ncNetServerPipeline.cpp 396 ncRefPtr<ncNetServerPipelineWorker> worker = new ncNetServerPipelineWorker(this);
+     普通构造，成员变量主要有两个map,一个存消息队列，key为每个连接id；一个存其状态,key为每个工作线程id
+**** ncNetServerPipeline.cpp 399 worker->start();
+***** 循环多次调用start，一通操作，运行一个线程，线程运行 [[ncNetServerPipelineWorker.Run]](int workerid)
+**** ncNetServerPipeline.cpp 402 worker->startcheck();
+***** 一通操作，运行一个线程,线程运行 [[ncNetServerPipelineWorker.CheckProc]]
+*** ncNetServer.cpp 579 [[_tl]]->start(_threadCountTL); 
+**** ncTransportServer.cpp 398 ncServerPipeline<ncTransportServer>::start (threadCount); 显示调用父类的start方法
+     循环多次，新建多个worker并调用start方法，然后添加到_workers中
+***** ncServerPipeline.h 68 ncRefPtr<ncPipelineWorker<T> > worker = new ncPipelineWorker<T> (this); 这里的T为前面传的ncTransportServer,普通构造
+***** ncServerPipeline.h 69 worker->start();
+****** 一通操作，运行一个线程，线程运行 [[ncPipelineWorker.Run]]
+***** ncServerPipeline.h 70 _workers.push_back(worker); 添加到vecotr中
+**** 循环创建多个[[ncServerEventLoop]] loop对象，运行，添加到_eventloop中
+**** ncTransportServer.cpp 400 ncRefPtr<ncServerEventLoop> loop = new ncServerEventLoop(this);
+     普通构造，_ioService()调用自身构造【boost库】，就是把参数赋值给_tl，然后其它置空置0置false
+**** ncTransportServer.cpp 401 loop->runEventLoop();
+     先调用_tl的onBeginEventLoop()方法，然后一通操作，运行一个线程，线程运行[[ncTransportServer.Run]]
+**** ncTransportServer.cpp 402 _eventloop.push_back(loop);
+*** ncNetServer.cpp 581 _tl->bind(_port);
+**** ncTransportServer.cpp 76-98 一通【boost库】操作
+**** ncTransportServer.cpp 99 startAccept();
+***** ncTransportServer.cpp 114-119
+      加加连接数，创建[[ncNetIOHandler]]这一实际操作网络的对象，然后【boost库】
+
+
+* 线程 #<<ncNetServerPipelineWorker.Run>>
+** 等(_msgQueueMap)不为空
+** 把上次最后运行的消息队列置为不运行
+** 遍历这个map,找到第一个非空未运行的队列，取出第一条消息并删除并设置为运行态，跳出此次遍历
+** 改变状态map，调用(handleMsg)处理消息，后，释放
+** 重置状态；或超时移除该工作线程然后退出
+** 回到上面接着等
+
+
+* 线程 #<<ncNetServerPipelineWorker.CheckProc>>
+** 延时1s
+** 遍历状态map
+** 若找到运行时间超过10s的线程，改变其状态，运行一个[[ncNetServerPipelineWorker.Run]](this, ++_workderId)新线程
+** 回到上面
+
+
+* 线程 #<<ncPipelineWorker.Run>> 模板T
+** 等(_msgQueueMap)不为空
+** 从中取出所有不为空的队列中的第一个消息并删除，添加到局部变量(msgqueue)中
+** 循环遍历(msgqueue)，取出并调用(handleMsg)方法处理，后，释放
+** 回到上面等
+
+
+* 线程 #<<ncTransportServer.Run>>
+** 用 _ioService 创建 ncIOServiceWork对象(_loopwork)【boost库】
+** 调用 _ioService.run() 阻塞【boost库】
+
+
+* ps
+** #<<ncTransportServer>> 继承自【ncServerPipeline<ncTransportServer>】【ncNetworkEvent 全是接口】
+** #<<ncNetIOHandler>> 继承自【nsISupports】
+   一堆变量，一堆函数
+

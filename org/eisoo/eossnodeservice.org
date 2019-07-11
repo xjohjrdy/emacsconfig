@@ -1,0 +1,54 @@
+* EOSSNodeService
+** 构造函数没什么，继承自ncIESFService也没什么，就是一些接口
+** 析构函数，就是把(_netServer)置0
+** 内存池(_pool)
+** 网络监听服务(_netServer)
+** 节点管理(_nodeManager)
+** 节点信息存储管理(_storManager)
+** 状态工作者(_statWorker)
+** 配置文件(_pConfig)
+** 节点id(_nodeId)
+** 锁(_masterMux) 为了原子修改masterip和端口
+** _masterIp
+** _masterPort
+** OnStart() 启动
+*** 读取配置文件(eoss.config)
+    集群端口是9631
+    （节点，元数据，数据）服务（应该是datachannel传输的）端口都是9630
+    管理服务端口是9629
+    元数据服务【器】的端口是9660
+    数据服务【器】的端口是9661
+**** 节点服务器(NodeService)
+***** 存储服务端口(storageSvcPort) = 9630
+***** 更新容量间隔(updateCapacityInterval) = 5
+**** 节点集群(NodeCluster)
+***** 集群ip(clusterIp) = 127.0.0.1
+***** 集群节点ip(clusterNodeIp) = 127.0.0.1  应该是指自己
+***** 集群节点端口(clusterNodePort) = 9631
+**** 节点服务(NodeServe)
+***** 服务ip地址(serverIpAddr) = 127.0.0.1
+***** 服务端口(serverPort) = 9630
+***** 自己的ip(selfIpAddr) = 127.0.0.1|::1
+***** 离线检测时长(offlineDetectTime) = 60
+**** 管理服务器(MgmService)
+***** 管理服务端口(mgmSvcPort) = 9629
+**** 元数据服务器(MetaService)
+***** 存储服务端口(storageSvcPort) = 9660
+**** 无数据服务(MetaServer)
+***** 服务ip地址(serverIpAddr) = 127.0.0.1
+***** 服务端口(serverPort) = 9630
+***** 自己的ip(selfIpAddr) = 127.0.0.1|::1
+***** 离线检测时长(offlineDetectTime) = 60
+**** 数据服务器(DataService)
+***** 存储服务端口(storageSvcPort) = 9661
+**** 数据服务(DataServer)
+***** 服务ip地址(serverIpAddr) = 127.0.0.1
+***** 服务端口(serverPort) = 9630
+***** 自己的ip(selfIpAddr) = 127.0.0.1|::1
+***** 离线检测时长(offlineDetectTime) = 60
+*** 建了个网络服务(_netServer)
+*** 建了个工厂<ncEOSSNodeHandlerFactory>，设置给(_netServer)
+*** 设置端口，即配置文件中NodeService下的storageSvcPort   9630
+*** 然后就Start()
+**** start() 调用 ncNetServerPipeline,创建一个流水线工作者多次start开启多线程来消费收到的消息
+**** _tl->start() 调用传输服务的start(),创建多个事件循环？绑定端口，开始监听，接收连接

@@ -1,0 +1,149 @@
+* eisoo
+** 通用账户密码
+   测试授权90天, @anybackup/7.0/test/90
+   root/eisoo.com123
+   apollo/Driver!@#$5678
+   admin/P@ssword123
+** centos离线安装
+   rpm -ivh xxx.rpm
+** 地址
+   负责人列表：http://confluence.eisoo.com/pages/viewpage.action?pageId=3379109
+   海量ip：192.168.0.250
+   关爱通地址：http://eisoo.guanaitong.com
+   git合并分支：http://confluence.eisoo.com/pages/viewpage.action?pageId=3379899
+   ftp取包地址：ftp://192.168.123.46/ci-jobs
+   jira任务bug管理：http://jira.eisoo.com:8080/
+   gitlab地址：http://192.168.248.76/
+   ab7.0文档：http://confluence.eisoo.com:8090/pages/viewpage.action?pageId=1088595
+   7.0构建：http://192.168.123.47:8080/
+   7.0分支线构建：http://10.2.9.3:8080/view/service-branch/job/BackupService/
+   小机自动构建:http://10.2.2.4:8080/job/ClientService/
+   主线自动构建:http://192.168.123.47:8080/view/eoss/
+** 统计位置
+   ip使用情况:AnyShare://AnyBackup产品线/AnyBackup产品测试部/共享资源/5资源统计/IP资源/IPV6使用统计.xlsx
+** AnyBackup
+*** 安装命令
+    服务端：./install.sh --product=CDM --server-type=MASTER --install-db=yes --db-id=105 --db-vip=10.2.0.153 --cluster-id=43 --cluster-vip=10.2.0.192 --cluster-vip-ex=2018:9::51 --self-ip=10.2.0.244 --self-ip-ex=2018:9::49
+    客户端：直接install.sh
+*** 卷位置
+    /sysvol/etc/volume.conf
+    还要改/etc/fstab
+*** 机器码位置
+    /var/lib/AnyBackup/machinecode
+** google test 参数
+   --gtest_filter=utIEOSSNodeClient.GetMetaServer
+   --gtest_filter=utIESSDataWriteClient.FullBackup_mem
+   --gtest_filter=utGenenal.all
+** eoss
+*** 参数
+    启动参数：eoss_svc.config
+    配置参数：eoss_data.config eoss_meta.config
+    调试模块：eossclient,eossdataservice
+** 编译
+   D:\gitlab\apollo\apollo\cmake\tools
+   D:\gitlab\apollo\target\Windows_All_x64\Debug
+   先使用abenv设置相应的环境变量
+   再到有cmakefile.txt的地方用makec进行编译
+   export LD_LIBRARY_PATH="$(pwd)"
+** 调试
+   需要用管理员运行
+*** 卸载过程卡住
+    ps -ef | grep AnyBackup | grep -v grep | cut -c 9-15 | xargs kill -9
+    rm -f /etc/systemd/system/AB*
+    rm -f /etc/systemd/system/multi-user.target.wants/AB*
+    systemctl daemon-reload
+    systemctl reset-failed
+    rm -rf /var/lib/AnyBackup/eossn/*
+    rm -rf /var/lib/AnyBackup/eoss*
+*** 打开trace调试
+    http://192.168.1.7/trac/eisoo/wiki/nc_trace#id12
+    将以下参数添加到cfl.config里
+    EnableTrace=on
+    TraceOutputLocation=file
+    TraceOutputFile=/eisoo/trace/eoss.trace
+    EnableTraceTime=on
+    EnableThreadSafe=off
+    EnableProcessSafe=on
+    TraceModule=eossclient,eossdataservice,eossnodemanager,eossmetaservice
+    TraceType=sync
+** 客户端运行流程
+*** esfdaemon一直运行
+*** 启动eefproc进程，接参数
+*** 1
+
+
+* 我理解的结构
+** #<<ncPipeline>> 流水线纯虚类 全是接口 继承[[nsISupports]]
+*** void start(int threadCount) = 0; 启动装配流水线
+*** void stop() = 0; 停止执行，调用不会立即停止命令队列，而是产生一个停止消息
+*** void onStop(MSG_HANDLER_ID msgHandlerId) = 0; 用户主动停止
+*** void onError(MSG_HANDLER_ID id, const [[ncCoreAbortException]] &e) = 0; 发生错误
+*** int handleMsg([[ncPipelineMsg]] *msg) = 0; 处理消息
+*** void push(MSG_HANDLER_ID id, [[ncNetOutputStream]] *out) = 0; 命令执行完后向下传递
+*** void pop(MSG_HANDLER_ID id, [[ncNetInputStream]] *in) = 0; 命令执行完后向上传递
+*** void push(MSG_HANDLER_ID id, [[ncPipelineCmd]] *cmd) = 0; 命令仅在当前层执行，不传递
+*** void pushHead(MSG_HANDLER_ID id, [[ncPipelineCmd]] *cmd) = 0; 将命令插入到消息队列前部
+*** void clear(MSG_HANDLER_ID id) = 0; 清除 id 的命令队列
+*** void onlyClearMsg(MSG_HANDLER_ID id) = 0; 只清理消息，不删除消息队列，在调用 AbortStop 清理消息队列时使用
+*** void prev([[ncPipeline]] *queue) = 0; 关联上一个命令队列，每一个命令处理完自动传递到上一个队列
+*** void next([[ncPipeline]] *queue) = 0; 关联下一个命令队列，每一个命令处理完自动传递到下一个队列
+*** protected:
+*** bool exec(MSG_HANDLER_ID id, [[ncNetOutputStream]] *out) = 0; 命令执行完后向下传递
+*** bool exec(MSG_HANDLER_ID id, [[ncNetInputStream]] *in) = 0; 命令执行完后向上传递
+*** String getPipelineName() = 0; 获取pipeline的名称
+** #<<ncPipelineMsg>> 流水线消息 结构体
+*** 枚举值Type：
+**** UNKNOWN 初始值
+**** PREC 消息执行完向上层传递
+**** NEXT 消息执行完向下层传递
+**** COMMAND 消息仅在当前层执行
+**** STOP 停止消息
+*** 一个[[ncPipeline]]的指针 pipeline 用来调用其执行接口
+*** Type类型 direction
+*** MSG_HANDLER_ID msgHandlerId 消息id
+*** [[nsISupports]]的指针 msgData 消息的内容数据
+*** 初始化，赋值，清理接口函数
+** #<<ncPipelineMsgQueue>> 流水线消息队列结构体
+*** 一个bool inproc 应该是正在运行与否
+*** 一个[[ncPipelineMsg]]的list msgs
+*** 一系列操作这个list的接口函数，添加，取出，判断等
+** #<<ncNetServerPipelineWorker>> 网络服务器流水线的工作类 继承[[ncIRefCount]]
+*** 成员变量：
+**** 一个原子bool _hasStopped 状态管理
+**** 锁和条件变量 用来控制map的改变
+**** 一个int64,[[ncPipelineMsgQueue]]的map _msgQueueMap 消息队列map
+**** 一个[[ncPipeline]]指针 _pipeline 好像并没有用到
+**** 一个int,ncWorkerInfo(就是个状态和时间的int结构体)的map  _workerStatusMap  工作线程的状态管理map
+*** 构造函数 没什么，就是赋值，置0
+*** void start() 加锁，运行Run(int workid)线程
+*** void stop() 加锁，改变状态值，解锁并通知所有
+*** void startcheck() 运行CheckProc()线程
+** #<<ncNetServerPipeline>> 网络服务器流水线 继承[[ncPipeline]]
+*** 成员变量：
+**** 一个分配器[[ncIAllocator]]的指针 _alloc 用来分配
+**** 一个原子bool _hasStopped 用来状态管理
+**** ncPiepline *_prev *_next 一个是上一个流水线，一个是下一个流水线
+**** [[ncNotifyManager]]的指针 _nm 用来通知
+**** TODO [[ncNetServerPipelineWorker]]的ncRefPtr(引用指针？) _worker  
+**** 线程数量 _threadcnt;
+*** 构造函数 #<<ncNetServerPipeline(ncIAllocator *, ncNotifyManager *nm)>> 就是赋值，置0
+*** ncNotifyManager * getNotifyManager() 返回成员变量_nm
+*** void start(int threadCount) 通过一系列方式，运行多线程,调用[[ncNetServerPipelineWorker]]的Run
+** #<<ncNotifyManager>> 通知管理纯虚类 继承[[nsISupports]]
+*** 成员变量
+**** 一个vecotr<[[ncPipeline]] *>
+*** 一系列的on接口，必须子类实现
+*** 三个成员函数：清除命令队列，再通知流水线
+** #<<ncNetServer>> 网络服务器类 继承[[ncINetServer]]\[[ncNetServerPipeline]]\[[ncNotifyManager]]
+*** 成员变量
+**** 一个[[ncTransportServer]]的指针 _tl
+**** 一个int, [[ncIMsgHandlerFactory]]的map _factoryMap
+**** 一个int64,[[ncIMsgHandler]]的无序map _msgHandlerMap
+**** 三个线程数量 _threadCountCL; _threadCountFL; _threadCountTL;
+**** 端口 _port
+**** 三个bool控制状态 _stopNetServer; _hasStart; _abortStop;
+**** 一个int64,[[ncChannelMessage]]的map _channelMsgMap
+*** 构造函数 #<<ncNetServer(ncIAllocator *alloc)>>
+**** 初始化列表调用[[ncNetServerPipeline(alloc, this)]]的构造
+**** NC_NEW在_alloc中新建[[ncTransportServer]]对象，参数(_alloc, this)
+**** 调用 [[_nm]] 的[[regPipeline]] 注册自己和_tl

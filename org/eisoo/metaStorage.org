@@ -1,0 +1,51 @@
+* ncEOSSMetaConfig （读取eoss.config文件，配置管理）
+
+* ncEOSSMetaDiskManager （接收ncEOSSMetaStorage，通过前者接口获得其成员对磁盘进行管理）
+** loadStoragePath() 加载数据库路径
+
+* ncEOSSMetaStorage （上面两个是构造里新建的，下面是在open在新建的，）
+** Load() 调用checkInUse，调用diskmgr的loadStoragePath，调用open
+** checkInUse() 锁死文件，eoss单进程使用
+** open() 新建缓存，新建下面这6个对象
+
+* ncMetaInfoStorage （接收leveldb构造，实际调用db接口进行增删改查）
+
+* ncChunkIndexManager (中转，构造接收ncMetaInfoStorage，对key值处理后，调用前者接口）
+
+* ncEOSSChunkManager (中转，ncChunkIndexManager做参传入，内部实际调用前者接口)
+
+* ncObjectIndexManager （接收db和ncChunkIndexManager）
+
+* ncObjectStorageManager （接收ncObjectIndexManager和ncChunkIndexManager）
+** ncChunkIndexManager 只在取Chunk内容的时候用了
+
+* ncEOSSObjectManager （接收db和ncObjectStorageManager）
+
+* -------------------------------
+
+* ncEOSSMetaStorageFactory （管理ncEOSSMetaStorage，新建、根据各种条件查询、删除）
+** Init(const String &configDirPath)
+*** 检查路径，一通操作加载已有的ncEOSSMetaStorage
+
+* ncEOSSMetaService （meta服务，被框架调用入口函数OnStart）
+** OnStart(void)
+*** 新建ncEOSSMetaStorageFactory，调用Init
+*** 新建ncNetServer
+*** 使用ncEOSSMetaStorageFactory新建ncEOSSMetaHandlerFactory，并设置给ncNetServer
+*** 读取配置文件，启动ip监听
+
+* ncEOSSMetaHandler （一堆响应函数）
+** onLogin 通过请求里的cid或者pool或者都没有，取得storage赋值给成员变量，回复guid和接受
+** onLogout 调用stop方法
+** stop 解除正常读的对象锁，关掉数据存储
+** onAddDisk 取出storage（有则用，无则新建），保存guid到lock文件中，调用其Load方法，回复id,name,path
+** onInitWrite 检查该任务是否有其它进程正在运行，查看是否存在这个gns路径，不
+** TODO onGetSubObjects 取传进来的路径的子路径
+*** 取eossObjectManager
+*** 用他的ObjectExist查有没有这个路径
+**** 用objectStorageManager的objectExists查
+***** 其实调用getBasicAttributes方法
+***** getBasicAttributes调用objectIndexManager的readObjectIndexData方法，实际查库得到在不在
+****** 调用findFsIndexKey
+*** 用他的EnumerateSubObjects得到迭代器
+
